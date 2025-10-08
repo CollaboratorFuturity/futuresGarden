@@ -1,4 +1,6 @@
 {
+  "77:57:3B:05":"TEST",
+  "CA:03:48:05":"AGENT_START",
   "FF:FF:FF:FF:FF": "the special modulator",
   "04:12:34:56:78:90:AB": "kitchen lights",
   "04:DE:AD:BE:EF:01": "start maintenance mode",
