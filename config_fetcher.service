@@ -1,0 +1,37 @@
+[Unit]
+Description=AIflow Configuration Fetcher
+Documentation=https://github.com/yourproject/aiflow
+After=network-online.target battery_log.service
+Wants=network-online.target
+StartLimitInterval=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/orb/AIflow
+
+# Load environment variables from dedicated env file
+EnvironmentFile=/home/orb/AIflow/.service_env
+
+# Execute config fetcher using virtual environment Python
+ExecStart=/home/orb/env/bin/python3 /home/orb/AIflow/config_fetcher.py
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+
+# Logging
+StandardOutput=append:/tmp/config_fetcher.log
+StandardError=append:/tmp/config_fetcher.log
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=false
+
+# Resource limits
+MemoryMax=256M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

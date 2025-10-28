@@ -1,0 +1,36 @@
+[Unit]
+Description=AIflow Battery Monitor and Safe Shutdown
+Documentation=https://github.com/yourproject/aiflow
+After=network.target
+Before=config_fetcher.service
+StartLimitInterval=0
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/orb/AIflow
+
+# Load environment variables from dedicated env file
+EnvironmentFile=/home/orb/AIflow/.service_env
+
+# Execute battery monitor using virtual environment Python
+ExecStart=/home/orb/env/bin/python3 /home/orb/AIflow/battery_log.py
+
+# Restart policy - always restart battery monitor
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=false
+
+# Resource limits
+MemoryMax=128M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target
