@@ -560,7 +560,7 @@ def check_and_apply_updates():
             # Validate update (check for critical files)
             required_files = ["main.py", "config_fetcher.py", "nfc_backend.py"]
             for req_file in required_files:
-                if not os.path.exists(os.path.join(extracted_dir, "RPI/AIflow", req_file)):
+                if not os.path.exists(os.path.join(extracted_dir, req_file)):
                     raise Exception(f"Missing required file: {req_file}")
 
             logger.info("✓ Update validation passed")
@@ -604,9 +604,8 @@ def check_and_apply_updates():
                 logger.info("Installing new version...")
                 shutil.rmtree(CODE_DIR)
 
-                # Move from GitHub's nested structure: extracted_dir/RPI/AIflow -> CODE_DIR
-                new_code_path = os.path.join(extracted_dir, "RPI/AIflow")
-                shutil.move(new_code_path, CODE_DIR)
+                # Copy files from extracted_dir -> CODE_DIR
+                shutil.copytree(extracted_dir, CODE_DIR)
                 logger.info(f"✓ Installed new code to {CODE_DIR}")
 
                 # Restore preserved data
