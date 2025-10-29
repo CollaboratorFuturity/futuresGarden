@@ -557,10 +557,19 @@ def check_and_apply_updates():
             extracted_dir = os.path.join(temp_dir, extracted_dirs[0])
             logger.info(f"✓ Extracted to: {extracted_dir}")
 
+            # Debug: List contents of extracted directory
+            try:
+                contents = os.listdir(extracted_dir)
+                logger.info(f"Contents of extracted directory: {contents}")
+            except Exception as e:
+                logger.warning(f"Could not list extracted directory: {e}")
+
             # Validate update (check for critical files)
             required_files = ["main.py", "config_fetcher.py", "nfc_backend.py"]
             for req_file in required_files:
-                if not os.path.exists(os.path.join(extracted_dir, req_file)):
+                file_path = os.path.join(extracted_dir, req_file)
+                if not os.path.exists(file_path):
+                    logger.error(f"Expected file at: {file_path}")
                     raise Exception(f"Missing required file: {req_file}")
 
             logger.info("✓ Update validation passed")
