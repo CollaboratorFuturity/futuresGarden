@@ -645,16 +645,15 @@ def check_and_apply_updates():
 
                 logger.info("=" * 50)
                 logger.info(f"✓ Update complete: {installed_version} → {latest_version}")
-                logger.info("Rebooting to apply changes...")
+                logger.info("Restarting with new code...")
                 logger.info("=" * 50)
 
                 # Cleanup temp directory
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-                # Reboot to apply update
-                time.sleep(2)
-                subprocess.run(["sudo", "reboot"], timeout=5)
-                sys.exit(0)  # Never reached, but explicit
+                # Restart this process with new code (no reboot needed!)
+                time.sleep(1)
+                os.execv(sys.executable, [sys.executable] + sys.argv)
 
             except Exception as e:
                 logger.error(f"Update installation failed: {e}")
