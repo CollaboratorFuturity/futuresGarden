@@ -749,7 +749,7 @@ def main():
     8. Launch main.py
     """
     logger.info("=" * 50)
-    logger.info("AIflow Configuration Fetcher Started!!")
+    logger.info("AIflow Configuration Fetcher Started...")
     logger.info("=" * 50)
     
     # Step 1: Wait for network (expect setup hotspot or existing connection)

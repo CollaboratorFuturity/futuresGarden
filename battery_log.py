@@ -134,6 +134,8 @@ def upload_worker():
                 r = requests.post(SUPABASE_URL, json=payload, headers=headers, timeout=UPLOAD_TIMEOUT)
                 if r.status_code // 100 == 2:
                     print(f"[Supabase] ✓ Uploaded: {percent:.1f}% (queue size: {upload_queue.qsize()})")
+                    # Debug: Log what server echoed back
+                    print(f"[Supabase] DEBUG - Server response: {r.text[:200]}")
                 else:
                     raise Exception(f"HTTP {r.status_code}: {r.text[:120]}")
             except Exception as e:
