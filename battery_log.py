@@ -125,7 +125,11 @@ def upload_worker():
                 "voltage": round(voltage, 2) if voltage is not None else None,
                 "temperature": temperature
             }
-            
+
+            # Debug: Log what we're about to send
+            print(f"[Supabase] DEBUG - Payload before send: {json.dumps(payload)}")
+            print(f"[Supabase] DEBUG - Voltage value: {voltage}, Temperature value: {temperature}")
+
             try:
                 r = requests.post(SUPABASE_URL, json=payload, headers=headers, timeout=UPLOAD_TIMEOUT)
                 if r.status_code // 100 == 2:
