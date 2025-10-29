@@ -482,6 +482,7 @@ def check_and_apply_updates():
         "agent_1701k5bgdzmte5f9q518mge3jsf0",      # Nova
         "agent_01jvwd88bdeeftgh3kxrx1k4sk",        # Cypher
         "beep.wav",                                 # Shared beep sound
+        ".service_env",                             # Service environment secrets
     ]
 
     logger.info("=" * 50)
@@ -576,7 +577,7 @@ def check_and_apply_updates():
 
             # Enable RW mode
             logger.info("Enabling read-write filesystem...")
-            result = subprocess.run(["sudo", "rwro", "rw"], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(["sudo", "rwro", "rw"], capture_output=True, text=True, timeout=15)
             if result.returncode != 0:
                 raise Exception(f"Failed to enable RW mode: {result.stderr}")
 
@@ -617,6 +618,11 @@ def check_and_apply_updates():
                 shutil.copytree(extracted_dir, CODE_DIR)
                 logger.info(f"✓ Installed new code to {CODE_DIR}")
 
+                # Fix ownership (files should be owned by orb:orb, not root)
+                logger.info("Setting correct file ownership...")
+                subprocess.run(["sudo", "chown", "-R", "orb:orb", CODE_DIR], capture_output=True, timeout=5)
+                logger.info("✓ File ownership set to orb:orb")
+
                 # Restore preserved data
                 logger.info("Restoring preserved data...")
                 for item in os.listdir(preserve_temp):
@@ -635,7 +641,7 @@ def check_and_apply_updates():
 
                 # Return to RO mode
                 logger.info("Returning to read-only filesystem...")
-                subprocess.run(["sudo", "rwro", "ro"], capture_output=True, timeout=5)
+                subprocess.run(["sudo", "rwro", "ro"], capture_output=True, timeout=10)
 
                 logger.info("=" * 50)
                 logger.info(f"✓ Update complete: {installed_version} → {latest_version}")
@@ -668,7 +674,7 @@ def check_and_apply_updates():
                         shutil.copy(backup_version, VERSION_FILE)
 
                     # Return to RO mode
-                    subprocess.run(["sudo", "rwro", "ro"], capture_output=True, timeout=5)
+                    subprocess.run(["sudo", "rwro", "ro"], capture_output=True, timeout=10)
 
                 except Exception as restore_error:
                     logger.error(f"Failed to restore backup: {restore_error}")
@@ -744,7 +750,7 @@ def main():
     8. Launch main.py
     """
     logger.info("=" * 50)
-    logger.info("AIflow Configuration Fetcher Started")
+    logger.info("AIflow Configuration Fetcher Started!!")
     logger.info("=" * 50)
     
     # Step 1: Wait for network (expect setup hotspot or existing connection)
