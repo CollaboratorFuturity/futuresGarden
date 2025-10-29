@@ -113,11 +113,18 @@ def upload_worker():
             item = upload_queue.get(timeout=1.0)
             
             percent = item['percent']
+            voltage = item.get('voltage')
+            temperature = item.get('temperature')
             attempts = item.get('attempts', 0)
-            
+
             # Try to upload
             headers = {"Content-Type": "application/json", "x-api-key": DEVICE_API_KEY}
-            payload = {"device_id": DEVICE_ID, "battery": round(percent)}
+            payload = {
+                "device_id": DEVICE_ID,
+                "battery": round(percent),
+                "voltage": round(voltage, 2) if voltage is not None else None,
+                "temperature": temperature
+            }
             
             try:
                 r = requests.post(SUPABASE_URL, json=payload, headers=headers, timeout=UPLOAD_TIMEOUT)
@@ -157,9 +164,15 @@ def start_upload_worker():
     upload_thread = threading.Thread(target=upload_worker, daemon=True, name="SupabaseUploader")
     upload_thread.start()
 
-def queue_upload(percent: float):
+def queue_upload(percent: float, voltage: float = None, temperature: str = None):
     """Queue a battery reading for async upload (non-blocking)"""
-    upload_queue.put({'percent': percent, 'attempts': 0, 'timestamp': time.time()})
+    upload_queue.put({
+        'percent': percent,
+        'voltage': voltage,
+        'temperature': temperature,
+        'attempts': 0,
+        'timestamp': time.time()
+    })
 
 def stop_upload_worker():
     """Gracefully stop the upload worker and save pending uploads"""
@@ -246,7 +259,7 @@ def main():
                 if now - last_upload >= SEND_INTERVAL:
                     print(f"[Battery] {pct:.1f}% ({v:.3f}V @ {current_mA:.1f}mA) | "
                           f"Temp:{health['temp']} Mem:{health['mem_pct']:.0f}% {health['status']}")
-                    queue_upload(pct)  # Non-blocking async upload
+                    queue_upload(pct, voltage=v, temperature=health['temp'])  # Non-blocking async upload
                     last_upload = now
                 
                 # Check for Pi under-voltage (more critical than battery voltage!)
