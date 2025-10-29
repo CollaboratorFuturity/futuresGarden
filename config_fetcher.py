@@ -168,7 +168,13 @@ def write_env_file(config: Dict, env_path: str) -> bool:
         
         # Extract volume (optional, defaults to 75)
         volume = config.get("volume", 75)
-        
+
+        # Extract input mode (optional, defaults to PTT)
+        input_mode = config.get("input_mode", "PTT").upper()
+        if input_mode not in ["PTT", "VAD"]:
+            logger.warning(f"Invalid input_mode '{input_mode}', defaulting to PTT")
+            input_mode = "PTT"
+
         # Extract device info (optional)
         device_id = config.get("id", "unknown")
         device_name = config.get("name", "unknown")
@@ -189,10 +195,11 @@ def write_env_file(config: Dict, env_path: str) -> bool:
             
             # Agent configuration
             f.write(f"AGENT_ID={agent_id}\n")
-            
+
             # System configuration
             f.write(f"VOLUME={volume}\n")
-            
+            f.write(f"INPUT_MODE={input_mode}\n")
+
             # Device information
             f.write(f"DEVICE_ID={device_id}\n")
             f.write(f"DEVICE_NAME={device_name}\n")
@@ -206,6 +213,7 @@ def write_env_file(config: Dict, env_path: str) -> bool:
         logger.info(f"Successfully wrote configuration to .env file")
         logger.info(f"  Agent: {agent_name} → {agent_id}")
         logger.info(f"  Volume: {volume}")
+        logger.info(f"  Input Mode: {input_mode}")
         logger.info(f"  Device: {device_name} ({device_id})")
         if wifi_ssid:
             logger.info(f"  WiFi: {wifi_ssid}")
@@ -451,6 +459,232 @@ def configure_wifi(ssid: str, password: str) -> bool:
         return False
 
 
+def check_and_apply_updates():
+    """
+    Check for updates from GitHub and apply if newer version available.
+    This function checks GitHub Releases API for the latest version,
+    compares to installed version, and downloads/installs if needed.
+
+    Returns:
+        bool: True if update was applied (will reboot), False if no update needed
+    """
+    GITHUB_REPO = "CollaboratorFuturity/futuresGarden"
+    GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    VERSION_FILE = "/home/orb/AIflow/version"  # Version file in the repo
+    CODE_DIR = "/home/orb/AIflow"
+    BACKUP_DIR = "/home/orb/AIflow.backup"
+
+    # Data folders/files to preserve during update
+    # These are agent-specific data folders (named by agent ID, not agent name)
+    PRESERVE_ITEMS = [
+        "uHlKfBtzRYokBFLcCOjq",                    # Zane
+        "agent_01jvs5f45jepab76tr81m51gdx",        # Rowan
+        "agent_1701k5bgdzmte5f9q518mge3jsf0",      # Nova
+        "agent_01jvwd88bdeeftgh3kxrx1k4sk",        # Cypher
+        "beep.wav",                                 # Shared beep sound
+    ]
+
+    logger.info("=" * 50)
+    logger.info("Checking for software updates...")
+    logger.info("=" * 50)
+
+    try:
+        # Read installed version
+        try:
+            with open(VERSION_FILE, 'r') as f:
+                installed_version = f.read().strip()
+            logger.info(f"Installed version: {installed_version}")
+        except FileNotFoundError:
+            installed_version = "v0.0.0"
+            logger.warning(f"No version file found, assuming {installed_version}")
+
+        # Check GitHub for latest release (with timeout)
+        try:
+            logger.info(f"Checking GitHub: {GITHUB_API_URL}")
+            response = requests.get(GITHUB_API_URL, timeout=10)
+            response.raise_for_status()
+            release_data = response.json()
+            latest_version = release_data['tag_name']
+            download_url = release_data['tarball_url']
+            logger.info(f"Latest version available: {latest_version}")
+        except requests.RequestException as e:
+            logger.warning(f"Failed to check for updates: {e}")
+            logger.info("Continuing with current version...")
+            return False
+        except (KeyError, json.JSONDecodeError) as e:
+            logger.warning(f"Failed to parse GitHub API response: {e}")
+            return False
+
+        # Compare versions
+        if latest_version == installed_version:
+            logger.info("✓ Already on latest version")
+            return False
+
+        logger.info(f"🔄 Update available: {installed_version} → {latest_version}")
+        logger.info("Downloading update...")
+
+        # Download update tarball
+        import tempfile
+        import tarfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp(prefix="aiflow_update_")
+        tarball_path = os.path.join(temp_dir, "update.tar.gz")
+
+        try:
+            # Download with timeout
+            logger.info(f"Downloading from: {download_url}")
+            dl_response = requests.get(download_url, timeout=60, stream=True)
+            dl_response.raise_for_status()
+
+            with open(tarball_path, 'wb') as f:
+                for chunk in dl_response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            logger.info(f"✓ Downloaded {os.path.getsize(tarball_path)} bytes")
+
+            # Extract tarball
+            logger.info("Extracting update...")
+            with tarfile.open(tarball_path, 'r:gz') as tar:
+                tar.extractall(temp_dir)
+
+            # Find extracted directory (GitHub adds repo name + hash)
+            extracted_dirs = [d for d in os.listdir(temp_dir)
+                            if os.path.isdir(os.path.join(temp_dir, d))]
+            if not extracted_dirs:
+                raise Exception("No directory found in tarball")
+
+            extracted_dir = os.path.join(temp_dir, extracted_dirs[0])
+            logger.info(f"✓ Extracted to: {extracted_dir}")
+
+            # Validate update (check for critical files)
+            required_files = ["main.py", "config_fetcher.py", "nfc_backend.py"]
+            for req_file in required_files:
+                if not os.path.exists(os.path.join(extracted_dir, "RPI/AIflow", req_file)):
+                    raise Exception(f"Missing required file: {req_file}")
+
+            logger.info("✓ Update validation passed")
+
+            # Enable RW mode
+            logger.info("Enabling read-write filesystem...")
+            result = subprocess.run(["sudo", "rwro", "rw"], capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                raise Exception(f"Failed to enable RW mode: {result.stderr}")
+
+            logger.info("✓ Filesystem is read-write")
+
+            try:
+                # Backup current installation
+                logger.info("Backing up current installation...")
+                if os.path.exists(BACKUP_DIR):
+                    shutil.rmtree(BACKUP_DIR)
+                shutil.copytree(CODE_DIR, BACKUP_DIR)
+                logger.info(f"✓ Backup created at {BACKUP_DIR}")
+
+                # Backup version file
+                if os.path.exists(VERSION_FILE):
+                    shutil.copy(VERSION_FILE, VERSION_FILE + ".backup")
+
+                # Preserve data folders
+                logger.info("Preserving data folders...")
+                preserve_temp = os.path.join(temp_dir, "preserved_data")
+                os.makedirs(preserve_temp, exist_ok=True)
+
+                for item in PRESERVE_ITEMS:
+                    item_path = os.path.join(CODE_DIR, item)
+                    if os.path.exists(item_path):
+                        dest = os.path.join(preserve_temp, item)
+                        if os.path.isdir(item_path):
+                            shutil.copytree(item_path, dest)
+                        else:
+                            shutil.copy(item_path, dest)
+                        logger.info(f"  ✓ Preserved: {item}")
+
+                # Replace code directory
+                logger.info("Installing new version...")
+                shutil.rmtree(CODE_DIR)
+
+                # Move from GitHub's nested structure: extracted_dir/RPI/AIflow -> CODE_DIR
+                new_code_path = os.path.join(extracted_dir, "RPI/AIflow")
+                shutil.move(new_code_path, CODE_DIR)
+                logger.info(f"✓ Installed new code to {CODE_DIR}")
+
+                # Restore preserved data
+                logger.info("Restoring preserved data...")
+                for item in os.listdir(preserve_temp):
+                    src = os.path.join(preserve_temp, item)
+                    dest = os.path.join(CODE_DIR, item)
+                    if os.path.isdir(src):
+                        shutil.copytree(src, dest)
+                    else:
+                        shutil.copy(src, dest)
+                    logger.info(f"  ✓ Restored: {item}")
+
+                # Update version file
+                with open(VERSION_FILE, 'w') as f:
+                    f.write(latest_version)
+                logger.info(f"✓ Updated version file to {latest_version}")
+
+                # Return to RO mode
+                logger.info("Returning to read-only filesystem...")
+                subprocess.run(["sudo", "rwro", "ro"], capture_output=True, timeout=5)
+
+                logger.info("=" * 50)
+                logger.info(f"✓ Update complete: {installed_version} → {latest_version}")
+                logger.info("Rebooting to apply changes...")
+                logger.info("=" * 50)
+
+                # Cleanup temp directory
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+                # Reboot to apply update
+                time.sleep(2)
+                subprocess.run(["sudo", "reboot"], timeout=5)
+                sys.exit(0)  # Never reached, but explicit
+
+            except Exception as e:
+                logger.error(f"Update installation failed: {e}")
+                logger.info("Attempting to restore from backup...")
+
+                try:
+                    # Restore backup
+                    if os.path.exists(BACKUP_DIR):
+                        if os.path.exists(CODE_DIR):
+                            shutil.rmtree(CODE_DIR)
+                        shutil.move(BACKUP_DIR, CODE_DIR)
+                        logger.info("✓ Restored from backup")
+
+                    # Restore version file
+                    backup_version = VERSION_FILE + ".backup"
+                    if os.path.exists(backup_version):
+                        shutil.copy(backup_version, VERSION_FILE)
+
+                    # Return to RO mode
+                    subprocess.run(["sudo", "rwro", "ro"], capture_output=True, timeout=5)
+
+                except Exception as restore_error:
+                    logger.error(f"Failed to restore backup: {restore_error}")
+                    logger.error("CRITICAL: System may be in inconsistent state")
+
+                raise
+
+        finally:
+            # Cleanup temp directory
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except:
+                pass
+
+    except Exception as e:
+        logger.error(f"Update check/apply failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        logger.info("Continuing with current version...")
+        return False
+
+    return False
+
+
 def transition_to_main_app(main_py_path: str):
     """
     Transition execution to main.py by replacing current process.
@@ -555,8 +789,11 @@ def main():
     # Step 6: Apply system volume
     if not apply_system_volume(config):
         logger.warning("Volume adjustment failed, but continuing...")
-    
-    # Step 7: Transition to main application (this does not return)
+
+    # Step 7: Check for software updates (will reboot if update applied)
+    check_and_apply_updates()
+
+    # Step 8: Transition to main application (this does not return)
     transition_to_main_app(MAIN_PY_PATH)
     
     # This line never executes - process has been replaced by main.py
