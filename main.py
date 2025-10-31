@@ -16,7 +16,7 @@ import threading
 import subprocess
 import requests
 from typing import Optional, Dict
-from mute_button import start_mute_button, is_muted, stop_mute_button, set_state_check
+from mute_button import start_mute_button, is_muted, stop_mute_button, set_state_check, set_mode
 import serial_com
 import nfc_backend
 from dotenv import load_dotenv
@@ -54,10 +54,10 @@ PERIODSIZE = SAMPLES_PER_FRAME
 
 # VAD parameters
 VAD_MODE = 3                    # 0..3 (3 = most aggressive)
-MIN_SPOKEN_MS = 400            # minimum speech before valid (ms)
+MIN_SPOKEN_MS = 800            # minimum speech before valid (ms)
 SILENCE_END_MS = 1500           # silence to trigger end (ms)
 PREROLL_FRAMES = 5
-START_GATE_FRAMES = 2
+START_GATE_FRAMES = 8           # Require 5 consecutive speech frames (150ms) to trigger
 
 # Derived from above
 MIN_CHUNKS = MIN_SPOKEN_MS // FRAME_MS
@@ -115,6 +115,9 @@ if INPUT_MODE == "PTT":
     log("📍 PTT Mode: Press and hold button to talk, release to end turn")
 else:
     log("📍 VAD Mode: Voice activity detection with optional mute button")
+
+# Set button mode after starting the button
+set_mode(INPUT_MODE)
 
 
 def track_pcm(pcm):
@@ -465,6 +468,7 @@ async def hot_reload_config() -> bool:
         # Extract values from config
         agent_name = config.get("agent_id")
         volume = config.get("volume")
+        input_mode = config.get("input_mode", "PTT").upper()
 
         if not agent_name:
             log("❌ Hot reload failed: No agent_id in config")
@@ -506,33 +510,45 @@ async def hot_reload_config() -> bool:
             except (ValueError, FileNotFoundError, subprocess.TimeoutExpired) as e:
                 log(f"⚠️ Volume update error: {e}")
 
-        # Check if AGENT_ID actually changed
-        global AGENT_ID, WS_ENDPOINT
+        # Check if AGENT_ID or INPUT_MODE changed
+        global AGENT_ID, WS_ENDPOINT, INPUT_MODE
         old_agent_id = AGENT_ID
+        old_input_mode = INPUT_MODE
         agent_changed = (new_agent_id != old_agent_id)
+        input_mode_changed = (input_mode != old_input_mode)
 
         if agent_changed:
             log(f"✅ Agent changed: {old_agent_id} → {new_agent_id}")
-
-            # Update global variables
             AGENT_ID = new_agent_id
             WS_ENDPOINT = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={AGENT_ID}"
-
-            # Update environment variables (so they persist in os.getenv calls)
             os.environ["AGENT_ID"] = AGENT_ID
+        else:
+            log(f"ℹ️  Agent unchanged ({agent_name})")
 
-            # Write updated config to /tmp/aiflow.env for persistence across hot reloads
+        # Update INPUT_MODE if changed
+        if input_mode_changed:
+            log(f"✅ Input mode changed: {old_input_mode} → {input_mode}")
+            INPUT_MODE = input_mode
+            os.environ["INPUT_MODE"] = INPUT_MODE
+
+            # Reconfigure button for new mode
+            import mute_button
+            mute_button.set_mode(INPUT_MODE)
+        else:
+            log(f"ℹ️  Input mode unchanged ({input_mode})")
+
+        # Write updated config to /tmp/aiflow.env (if anything changed)
+        if agent_changed or input_mode_changed:
             try:
                 with open("/tmp/aiflow.env", "w") as f:
                     f.write(f"AGENT_ID={AGENT_ID}\n")
                     f.write(f"ELEVENLABS_API_KEY={os.getenv('ELEVENLABS_API_KEY')}\n")
+                    f.write(f"INPUT_MODE={INPUT_MODE}\n")
                     if volume is not None:
                         f.write(f"VOLUME={volume}\n")
                 log("✅ Updated /tmp/aiflow.env")
             except Exception as e:
                 log(f"⚠️ Failed to write /tmp/aiflow.env: {e}")
-        else:
-            log(f"ℹ️  Agent unchanged ({agent_name})")
 
         # ALWAYS force return to splash_idle (whether agent changed or not)
         current_state = get_state()
@@ -769,6 +785,7 @@ async def stream_audio_vad(ws):
     # Mark idle while waiting for speech
     set_idle(True)
     log("🗣️ [VAD] Waiting for speech...")
+    serial_com.write('U')  # Show unmuted/listening animation
     nfc.enable()
     
     try:
@@ -802,28 +819,19 @@ async def stream_audio_vad(ws):
                 nfc.disable()
                 return
 
-            if is_muted():
-                serial_com.write('M')
-            else:
-                serial_com.write('U')
-            
             frames_read, chunk = mic.read()
             muted_now = is_muted()
 
-            # If muted, VAD is disabled
+            # Update serial animation when mute state changes
+            if muted_now != prev_muted:
+                if muted_now:
+                    serial_com.write('N')  # VAD muted animation
+                else:
+                    serial_com.write('U')  # VAD unmuted animation
+
+            # If muted, pause recording but DON'T end turn
             if muted_now:
-                # Reset VAD state when muted
-                if speaking:
-                    log("🔇 [VAD] Muted → ending turn")
-                    serial_com.write('M')
-                    nfc.disable()
-                    silent = b'\x00' * FRAME_BYTES
-                    for _ in range(END_SILENCE_CHUNKS):
-                        await send_user_json(ws, {"user_audio_chunk": base64.b64encode(silent).decode()})
-                        metrics.on_audio_sent(len(silent), voiced=None, synthetic=True)
-                        await asyncio.sleep(FRAME_SEC)
-                    buf.clear(); globals()["LAST_MIC_METRICS"] = metrics
-                    return
+                # Just skip this frame - VAD will end turn via silence detection
                 await asyncio.sleep(FRAME_SEC)
                 continue
 

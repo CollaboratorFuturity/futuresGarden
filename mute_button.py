@@ -15,23 +15,39 @@ except Exception:
 
 # Shared state
 __MUTED = threading.Event()
-__MUTED.set()  # Start muted by default (button must be pressed to start speaking)
+__MUTED.set()  # Start muted by default for PTT mode
 __STOP  = threading.Event()
 __THREAD = None
 __BTN = None
 __STATE_CHECK = None  # Callback to check if button should be active
+__MODE = "PTT"  # "PTT" or "VAD" - determines button behavior
 
 def is_muted() -> bool:
     """Return True if the mic should be muted."""
     return __MUTED.is_set()
 
+def set_mode(mode: str):
+    """Set the button mode: 'PTT' or 'VAD'"""
+    global __MODE
+    __MODE = mode.upper()
+    if __MODE == "VAD":
+        # In VAD mode, start UNMUTED (ready to listen)
+        __MUTED.clear()
+        print(f"[Mute] Mode set to VAD - starting UNMUTED")
+    else:
+        # In PTT mode, start MUTED (must press to talk)
+        __MUTED.set()
+        print(f"[Mute] Mode set to PTT - starting MUTED")
+
 def _toggle():
     if __MUTED.is_set():
         __MUTED.clear()
         print("[Mute] UNMUTED")
+        serial_com.write('U')
     else:
         __MUTED.set()
         print("[Mute] MUTED")
+        serial_com.write('M')
 
 def _watch_loop(pin_obj, debounce_s: float, poll_s: float):
     """
@@ -77,30 +93,38 @@ def _watch_loop(pin_obj, debounce_s: float, poll_s: float):
             # Button just pressed (after debounce)
             if pressed and not last_pressed:
                 press_start_time = now
-                # Always unmute immediately to allow instant speech
-                if __MUTED.is_set():
-                    __MUTED.clear()
-                    if logBut: print("[Mute] UNMUTED (button pressed)")
-                    serial_com.write('U')  # Unmuted - ready to record
 
-            # Button just released
+                if __MODE == "VAD":
+                    # VAD mode: Simple toggle on press
+                    _toggle()
+                    if logBut: print(f"[Mute] VAD mode - toggled to {'MUTED' if __MUTED.is_set() else 'UNMUTED'}")
+                else:
+                    # PTT mode: Unmute immediately on press
+                    if __MUTED.is_set():
+                        __MUTED.clear()
+                        if logBut: print("[Mute] PTT - UNMUTED (button pressed)")
+                        serial_com.write('U')  # Unmuted - ready to record
+
+            # Button just released (only matters in PTT mode)
             if not pressed and last_pressed:
-                if press_start_time:
-                    duration_ms = (now - press_start_time) * 1000.0
-                    if duration_ms < PRESS_MIN_MS:
-                        # Short press — silently revert without causing a turn end
-                        if not __MUTED.is_set():
-                            __MUTED.set()
-                            if logBut: print(f"[Mute] Short press ignored ({duration_ms:.0f}ms → revert to MUTED)")
-                            serial_com.write('M')  # Muted - button released
-                        # DO NOT trigger force_turn_end or inject silence
-                    else:
-                        # Long press — normal mute transition on release
-                        if not __MUTED.is_set():
-                            __MUTED.set()
-                            if logBut: print(f"[Mute] MUTED (held {duration_ms:.0f}ms)")
-                            serial_com.write('M')  # Muted - button released
-                press_start_time = None
+                if __MODE == "PTT":
+                    if press_start_time:
+                        duration_ms = (now - press_start_time) * 1000.0
+                        if duration_ms < PRESS_MIN_MS:
+                            # Short press — silently revert without causing a turn end
+                            if not __MUTED.is_set():
+                                __MUTED.set()
+                                if logBut: print(f"[Mute] PTT - Short press ignored ({duration_ms:.0f}ms → revert to MUTED)")
+                                serial_com.write('M')  # Muted - button released
+                            # DO NOT trigger force_turn_end or inject silence
+                        else:
+                            # Long press — normal mute transition on release
+                            if not __MUTED.is_set():
+                                __MUTED.set()
+                                if logBut: print(f"[Mute] PTT - MUTED (held {duration_ms:.0f}ms)")
+                                serial_com.write('M')  # Muted - button released
+                    press_start_time = None
+                # In VAD mode, button release does nothing (toggle happened on press)
 
             last_pressed = pressed
             time.sleep(poll_s)
