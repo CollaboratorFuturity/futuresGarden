@@ -81,4 +81,8 @@
   "04:86:F7:E2:8B:11:90" : "AGENT_START",
   "04:EC:F7:E2:8B:11:90" : "AGENT_START",
   "04:7C:F7:E2:8B:11:90" : "AGENT_START"
+  "***FUTURITY ORB***" : "*** SCAN BOOK ***",
+  "04:65:F7:E2:8B:11:90" : "Tell me about this new book you are launching",
+  "04:43:F6:E2:8B:11:91" : "Tell me about this new book you are launching",
+  "04:03:F7:E2:8B:11:91" : "Tell me about this new book you are launching",
 }
