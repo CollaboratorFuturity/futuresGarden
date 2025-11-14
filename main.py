@@ -1229,8 +1229,16 @@ async def run_session():
                             # Check if NFC triggered this turn (skip short-turn logic)
                             nfc_triggered = globals().pop("NFC_TRIGGERED_TURN", False)
                             if nfc_triggered:
-                                log("📨 NFC-triggered turn → proceeding to agent response")
-                                # Skip short-turn check, always get agent response
+                                log("📨 NFC-triggered turn → cancelling pong_task and proceeding to agent response")
+                                # NFC tags don't send audio, so pong_task wasn't cancelled - do it now
+                                try:
+                                    if pong_task and not pong_task.done():
+                                        log("🔄 Cancelling pong_task for NFC turn...")
+                                        pong_task.cancel()
+                                        await pong_task
+                                        log("✅ pong_task cancelled")
+                                except Exception as e:
+                                    log(f"⚠️ pong_task cancel error (NFC): {e}")
                             else:
                                 log("🔍 Checking for short turn...")
                                 lm = globals().get("LAST_MIC_METRICS", None)
