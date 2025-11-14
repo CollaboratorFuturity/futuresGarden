@@ -16,9 +16,9 @@ DEVICE_ID      = os.getenv("DEVICE_ID")
 
 SEND_INTERVAL    = 90      # seconds (upload cadence)
 CHECK_INTERVAL   = 30      # seconds (voltage checks)
-LOW_VOLTAGE      = 3.65    # V
-CRITICAL_VOLTAGE = 3.55    # V
-VOLTAGE_THRESHOLD = 0.5   # V 
+LOW_VOLTAGE      = 3.8    # V
+CRITICAL_VOLTAGE = 3.7    # V
+VOLTAGE_THRESHOLD = 0.35   # V 
 
 LOW_COUNT_THRESHOLD = 3        # number of consecutive low-voltage reads to trigger LOW event
 CRITICAL_COUNT_THRESHOLD = 3   # number of consecutive critical-voltage reads to trigger shutdown

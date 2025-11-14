@@ -36,7 +36,7 @@ load_dotenv('/tmp/aiflow.env')
 API_KEY  = os.getenv("ELEVENLABS_API_KEY")
 AGENT_ID = os.getenv("AGENT_ID")
 WS_ENDPOINT = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={AGENT_ID}"
-detail = False #set to true for detailed logging
+detail = True  # Detailed logging enabled for debugging audio timing issues
 # Devices
 MIC_DEVICE = os.getenv("MIC_DEVICE", "plughw:0,0")
 SPK_DEVICE = os.getenv("SPK_DEVICE", "plughw:0,0")
@@ -54,7 +54,7 @@ PERIODSIZE = SAMPLES_PER_FRAME
 
 # VAD parameters
 VAD_MODE = 3                    # 0..3 (3 = most aggressive)
-MIN_SPOKEN_MS = 800            # minimum speech before valid (ms)
+MIN_SPOKEN_MS = 600            # minimum speech before valid (ms)
 SILENCE_END_MS = 1500           # silence to trigger end (ms)
 PREROLL_FRAMES = 5
 START_GATE_FRAMES = 8           # Require 5 consecutive speech frames (150ms) to trigger
@@ -64,7 +64,7 @@ MIN_CHUNKS = MIN_SPOKEN_MS // FRAME_MS
 END_SILENCE_CHUNKS = SILENCE_END_MS // FRAME_MS
 
 # Response handling
-FIRST_CONTENT_MAX = 5.0         # sec to wait for first agent response
+FIRST_CONTENT_MAX = 15.0        # sec to wait for first agent response (increased from 5.0 - ElevenLabs can take 10+ seconds for complex responses)
 CONTENT_IDLE      = 0.15         # sec idle after last content
 GRACE_DRAIN       = 0.15         # sec sweep for stragglers
 FIRST_TURN_BARGE_AFTER_MS = 500 # open mic ~0.6s after greeting starts
@@ -636,30 +636,41 @@ class TurnMetrics:
 # MIC TURN
 # ==========================================================================
 
-async def stream_audio(ws):
+async def stream_audio(ws, pong_task=None):
     """
     Stream audio from microphone to ElevenLabs.
     Behavior depends on INPUT_MODE: VAD (voice activity) or PTT (push-to-talk).
+
+    Args:
+        ws: WebSocket connection
+        pong_task: Optional asyncio Task running maintain_pong() to cancel when audio starts
     """
     if INPUT_MODE == "PTT":
-        await stream_audio_ptt(ws)
+        await stream_audio_ptt(ws, pong_task)
     else:
-        await stream_audio_vad(ws)
+        await stream_audio_vad(ws, pong_task)
 
-async def stream_audio_ptt(ws):
+async def stream_audio_ptt(ws, pong_task=None):
     """
     PTT Mode: Push-to-talk with button control.
     - Press button → start sending immediately
     - Release button → end turn immediately
     - No VAD, no silence detection
+
+    Args:
+        ws: WebSocket connection
+        pong_task: Optional asyncio Task running maintain_pong() to cancel when button pressed
     """
+    log("🎙️ [PTT] === Starting PTT audio stream ===")
+
     # Force button to muted state before starting
     import mute_button as mb
     mb.force_mute()
-    
+
     mic = setup_mic(); metrics = TurnMetrics()
     buf = bytearray(); speaking = False
     nfc_triggered = False  # Track if NFC caused exit
+    pong_cancelled = False  # Track if we've cancelled pong_task
 
     # Track previous mute state for edge detection
     # Force True to ensure first button press is always detected as edge
@@ -711,6 +722,21 @@ async def stream_audio_ptt(ws):
             # Button PRESSED (unmuted) → Start sending after stabilization delay
             if (not speaking) and prev_muted and (not muted_now):
                 log("🎙️ [PTT] Button pressed → stabilizing power rail...")
+
+                # Cancel pong_task IMMEDIATELY when button pressed to prevent it from
+                # consuming audio messages that arrive while user is speaking
+                if pong_task and not pong_cancelled:
+                    log("🔄 [PTT] Cancelling pong_task on button press...")
+                    pong_task.cancel()
+                    try:
+                        await asyncio.wait_for(pong_task, timeout=0.5)
+                        log("✅ [PTT] pong_task cancelled successfully")
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        log("✅ [PTT] pong_task cancelled")
+                    except Exception as e:
+                        log(f"⚠️ [PTT] pong_task cancel error: {e}")
+                    pong_cancelled = True
+
                 # 250ms delay allows power rail to stabilize after GPIO change
                 # before CPU ramp-up and mic activation
                 await asyncio.sleep(0.15)
@@ -723,6 +749,7 @@ async def stream_audio_ptt(ws):
             # Button RELEASED (muted) → End turn immediately
             if speaking and (not prev_muted) and muted_now:
                 log("🎙️ [PTT] Button released → ending turn")
+                log(f"   Sent {metrics.frames_sent} frames, {metrics.ms_sent:.0f}ms of audio")
                 serial_com.write('L')  # Show loading animation while processing
                 nfc.disable()
                 # Send end of turn signal
@@ -732,6 +759,7 @@ async def stream_audio_ptt(ws):
                     metrics.on_audio_sent(len(silent), voiced=None, synthetic=True)
                     await asyncio.sleep(FRAME_SEC)
                 buf.clear(); globals()["LAST_MIC_METRICS"] = metrics
+                log("🎙️ [PTT] === PTT audio stream complete ===")
                 return
 
             prev_muted = muted_now
@@ -768,16 +796,21 @@ async def stream_audio_ptt(ws):
             globals()["NFC_TRIGGERED_TURN"] = True
         log("✅ stream_audio_ptt cleanup complete")
 
-async def stream_audio_vad(ws):
+async def stream_audio_vad(ws, pong_task=None):
     """
     VAD Mode: Voice activity detection (hands-free).
     - Automatic speech detection
     - Silence detection ends turn
     - Button acts as simple mute toggle
+
+    Args:
+        ws: WebSocket connection
+        pong_task: Optional asyncio Task running maintain_pong() to cancel when speech detected
     """
     mic = setup_mic(); metrics = TurnMetrics()
     preroll = deque(maxlen=PREROLL_FRAMES)
     buf = bytearray(); silence_chunks = speech_chunks = 0; speaking = False; gate_counter = 0
+    pong_cancelled = False  # Track if we've cancelled pong_task
 
     # Track previous mute state for edge detection
     prev_muted = is_muted()
@@ -852,6 +885,20 @@ async def stream_audio_vad(ws):
                         if gate_counter >= START_GATE_FRAMES:
                             speaking = True
                             log("🗣️ [VAD] Speech detected → recording started")
+
+                            # Cancel pong_task when speech detected
+                            if pong_task and not pong_cancelled:
+                                log("🔄 [VAD] Cancelling pong_task on speech detection...")
+                                pong_task.cancel()
+                                try:
+                                    await asyncio.wait_for(pong_task, timeout=0.5)
+                                    log("✅ [VAD] pong_task cancelled successfully")
+                                except (asyncio.CancelledError, asyncio.TimeoutError):
+                                    log("✅ [VAD] pong_task cancelled")
+                                except Exception as e:
+                                    log(f"⚠️ [VAD] pong_task cancel error: {e}")
+                                pong_cancelled = True
+
                             nfc.enable()
                             set_idle(False)
                             # Send preroll buffer
@@ -893,13 +940,9 @@ async def receive_response(ws, first_turn=False, barge_after_ms=0):
     # Agent is (potentially) about to speak; mark not idle
     set_idle(False)
 
-    # --- Short-turn immediate skip ---
-    lm = globals().get("LAST_MIC_METRICS", None)
-    if lm and getattr(lm, "ms_sent", 0) < 800:
-        log("⚡ Short user turn (<800ms) — skipping agent wait entirely.")
-        serial_com.write('L')
-        nfc.enable()
-        return
+    # Add absolute timeout to prevent infinite hangs (60 seconds max)
+    receive_start_time = time.time()
+    ABSOLUTE_TIMEOUT = 60.0  # 60 seconds hard limit
 
     speaker = setup_speaker()
     metrics = TurnMetrics()
@@ -969,7 +1012,16 @@ async def receive_response(ws, first_turn=False, barge_after_ms=0):
             if STOP:
                 return
             now = time.time()
-            
+
+            # Check absolute timeout to prevent infinite hangs
+            if (now - receive_start_time) > ABSOLUTE_TIMEOUT:
+                log(f"⏰ ABSOLUTE TIMEOUT reached ({ABSOLUTE_TIMEOUT}s) - forcing exit")
+                log(f"   saw_content={saw_any_content}, saw_audio={saw_any_audio}, msgs={ws_msgs_received}")
+                drain(out_buf, True)
+                serial_com.write('L')
+                nfc.enable()
+                return
+
             # Periodic status logging for debugging hangs
             if now - last_log_at >= LOG_INTERVAL:
                 elapsed = now - turn_start
@@ -986,14 +1038,18 @@ async def receive_response(ws, first_turn=False, barge_after_ms=0):
                     adaptive_max = min(1.0, FIRST_CONTENT_MAX)  # cap timeout a>
             
                 if elapsed > adaptive_max:
+                    log(f"⏱️  No content after {elapsed:.1f}s - checking for late arrivals...")
                     if await grace_drain(out_buf):
+                        log("✅ Late content arrived - continuing...")
                         continue
                     full_text = "".join(text_chunks).strip()
                     if not full_text:
+                        log("⚠️ No response from agent - returning to idle")
                         serial_com.write('L')
                         nfc.enable()
                         return
                     log(f"🧠 [Agent full]: {full_text or '(no text)'}")
+                    log("⚠️ Got text but no audio - possible timing issue")
                     serial_com.write('L')
                     drain(out_buf, True)
                     nfc.enable()
@@ -1029,17 +1085,31 @@ async def receive_response(ws, first_turn=False, barge_after_ms=0):
                 drain(out_buf, True); raise
 
             data = json.loads(raw); typ = data.get("type")
-            
+
             # Log all non-ping message types for debugging
             if typ != "ping":
                 if detail: log(f"📨 [WS] Received: {typ}")
+
             if typ == "audio":
                 b64 = (data.get("audio_event") or {}).get("audio_base_64", "")
                 if b64:
+                    pcm = base64.b64decode(b64)
+                    out_buf += pcm
+                    buf_after = len(out_buf)
+
                     if not saw_any_audio:
                         serial_com.write('O')   # 🔴 agent just started talking
-                    pcm = base64.b64decode(b64); out_buf += pcm
-                    metrics.on_agent_audio(len(pcm)); drain(out_buf)
+                        if detail:
+                            log(f"🔊 First audio chunk received: {len(pcm)} bytes")
+                            log(f"   Buffer size before drain: {buf_after} bytes ({buf_after/(RATE*BYTES_PER_SAMPLE)*1000:.0f}ms)")
+
+                    metrics.on_agent_audio(len(pcm))
+                    drain(out_buf)
+
+                    # Log if buffer is growing (audio arriving faster than we can play)
+                    if detail and len(out_buf) > FRAME_BYTES * 10:  # More than 10 frames buffered
+                        log(f"⚠️ Audio buffer growing: {len(out_buf)} bytes ({len(out_buf)/(RATE*BYTES_PER_SAMPLE)*1000:.0f}ms)")
+
                     saw_any_audio = saw_any_content = True
                     last_content_at = time.time()
                     if first_content_at is None: first_content_at = last_content_at
@@ -1141,10 +1211,16 @@ async def run_session():
 
                     while True:
                         try:
+                            log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                            log("🔄 Starting new conversation turn")
+                            log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
                             # Start streaming audio (user turn)
-                            await stream_audio(ws)
+                            # Pass pong_task so it can be cancelled when user starts speaking
+                            await stream_audio(ws, pong_task)
                             log("✅ stream_audio() returned")
-                            
+                            log("   (pong_task was cancelled during audio streaming)")
+
                             # Check if state changed during audio streaming
                             if get_state() != "running_agent":
                                 log("🛑 State changed during audio streaming - exiting session")
@@ -1176,29 +1252,21 @@ async def run_session():
                                         continue
                                 else:
                                     log("📏 Normal turn (no short-turn skip)")
-                    
-                            # Pause idle keepalive before recv() to avoid collision
-                            log("🔄 Cancelling pong_task before receive_response...")
-                            pong_task.cancel()
-                            try:
-                                # Add timeout to prevent infinite hang
-                                await asyncio.wait_for(pong_task, timeout=2.0)
-                                log("✅ pong_task cancelled successfully")
-                            except asyncio.TimeoutError:
-                                log("⏰ pong_task cancellation timed out after 2s - forcing continue")
-                                # Don't wait, just proceed - pong_task will die with websocket
-                            except asyncio.CancelledError:
-                                log("✅ pong_task cancelled (CancelledError)")
-                            except Exception as e:
-                                log(f"⚠️ pong_task await error: {e}")
-                    
+
+                            # pong_task already cancelled during stream_audio() when user started speaking
                             # Now listen for agent response (recv owns socket)
                             log("▶️  Calling receive_response()...")
                             await receive_response(ws)
-                    
+                            log("✅ receive_response() returned")
+
                             # Resume idle keepalive between turns
+                            log("🔄 Restarting pong_task for next turn...")
                             pong_task = asyncio.create_task(maintain_pong(ws))
-                    
+
+                            log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                            log("✅ Turn complete - ready for next interaction")
+                            log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
                             await asyncio.sleep(0.15)
                         except websockets.exceptions.ConnectionClosed as e:
                             log(f"🔌 WS closed by server: code={getattr(e, 'code', '?')}, reason={getattr(e, 'reason', '?')}")
