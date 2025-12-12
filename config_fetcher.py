@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Configuration Fetcher for AIflow
-Fetches configuration from remote web server, maps agent names to IDs,
-saves to .env file, sets system volume, and launches main.py
+Fetches configuration from remote web server, saves to .env file,
+sets system volume, and launches main.py
 """
 
 import os
@@ -33,13 +33,7 @@ MAX_RETRIES = 5
 RETRY_DELAY = 5  # seconds
 NETWORK_WAIT_TIMEOUT = 60  # seconds
 
-# Agent name to ID mapping (UPDATE THESE WITH ACTUAL AGENT IDs)
-AGENT_NAME_TO_ID = {
-    "Zane": "uHlKfBtzRYokBFLcCOjq",
-    "Rowan": "agent_01jvs5f45jepab76tr81m51gdx",
-    "Nova": "agent_1701k5bgdzmte5f9q518mge3jsf0",
-    "Cypher": "agent_01jvwd88bdeeftgh3kxrx1k4sk"
-}
+# No longer needed - agent_id comes directly from API
 
 # Setup logging
 # Note: Only use FileHandler since systemd redirects stdout to the same file
@@ -118,53 +112,32 @@ def fetch_config_from_api(url: str, retries: int = MAX_RETRIES) -> Optional[Dict
     return None
 
 
-def map_agent_name_to_id(agent_name: str) -> Optional[str]:
-    """
-    Map agent name from API to actual agent ID.
-    
-    Args:
-        agent_name: Agent name from API (e.g., "Zane", "Rowan", "Nova", "Cypher")
-        
-    Returns:
-        Mapped agent ID string or None if not found
-    """
-    agent_id = AGENT_NAME_TO_ID.get(agent_name)
-    
-    if agent_id:
-        logger.info(f"Mapped agent name '{agent_name}' to ID: {agent_id}")
-    else:
-        logger.error(f"Unknown agent name: {agent_name}")
-        logger.error(f"Available agents: {list(AGENT_NAME_TO_ID.keys())}")
-    
-    return agent_id
+# Removed: map_agent_name_to_id() - agent_id now comes directly from API
 
 
 def write_env_file(config: Dict, env_path: str) -> bool:
     """
-    Write configuration to .env file with agent name mapping.
+    Write configuration to .env file.
     Extracts only necessary fields: agent_id, volume, id, name, wifi.ssid, wifi.password
-    
+
     Args:
         config: Configuration dictionary from API
         env_path: Path to .env file
-        
+
     Returns:
         True if successful, False otherwise
     """
     try:
         logger.info(f"Writing configuration to {env_path}...")
-        
+
         # Extract and validate required fields
-        agent_name = config.get("agent_id")
-        if not agent_name:
+        agent_id = config.get("agent_id")
+        if not agent_id:
             logger.error("Missing 'agent_id' in API response")
             return False
-        
-        # Map agent name to actual agent ID
-        agent_id = map_agent_name_to_id(agent_name)
-        if not agent_id:
-            logger.error("Failed to map agent name to ID")
-            return False
+
+        # Optional: also get agent_name if provided (for logging purposes)
+        agent_name = config.get("agent_name", "Unknown")
         
         # Extract volume (optional, defaults to 75)
         volume = config.get("volume", 75)
@@ -211,7 +184,7 @@ def write_env_file(config: Dict, env_path: str) -> bool:
                 f.write(f"WIFI_PASSWORD={wifi_password}\n")
         
         logger.info(f"Successfully wrote configuration to .env file")
-        logger.info(f"  Agent: {agent_name} → {agent_id}")
+        logger.info(f"  Agent: {agent_name} (ID: {agent_id})")
         logger.info(f"  Volume: {volume}")
         logger.info(f"  Input Mode: {input_mode}")
         logger.info(f"  Device: {device_name} ({device_id})")
@@ -742,10 +715,10 @@ def main():
     1. Wait for network connectivity (on default/setup hotspot)
     2. Try to fetch configuration from API
     3. If API fetch fails, load saved WiFi and try to connect
-    4. Map agent name to agent ID
-    5. Write to .env file
-    6. Configure WiFi network
-    7. Apply system volume
+    4. Write configuration to .env file
+    5. Configure WiFi network
+    6. Apply system volume
+    7. Check for software updates
     8. Launch main.py
     """
     logger.info("=" * 50)
@@ -782,8 +755,8 @@ def main():
         sys.exit(1)
     
     logger.info(f"Fetched configuration keys: {list(config.keys())}")
-    
-    # Step 3 & 4: Map agent name and write .env file
+
+    # Step 4: Write configuration to .env file
     if not write_env_file(config, ENV_FILE_PATH):
         logger.error("Failed to write .env file")
         sys.exit(1)
