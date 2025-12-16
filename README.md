@@ -292,19 +292,6 @@ WIFI_SSID=your_network                      # WiFi credentials
 WIFI_PASSWORD=your_password
 ```
 
-### Agent Name Mapping
-
-Cloud config uses human-readable names, mapped to ElevenLabs agent IDs:
-
-```python
-AGENT_MAP = {
-    "Zane": "uHlKfBtzRYokBFLcCOjq",
-    "Rowan": "agent_01jvs5f45jepab76tr81m51gdx",
-    "Nova": "agent_1701k5bgdzmte5f9q518mge3jsf0",
-    "Cypher": "agent_01jvwd88bdeeftgh3kxrx1k4sk"
-}
-```
-
 ### Volume Calibration (1-10 scale → ALSA raw values)
 
 ```python
@@ -460,7 +447,6 @@ Speaker
 **Key Responsibilities:**
 - Network connectivity validation (60s timeout)
 - Cloud configuration fetching (Supabase API)
-- Agent name → ID mapping
 - System volume application (amixer)
 - WiFi provisioning (NetworkManager/nmcli)
 - OTA update checking and installation
@@ -507,7 +493,6 @@ main.py takes over
 | `main()` | Entry point orchestrating full startup sequence |
 | `wait_for_network(timeout)` | Poll network connectivity with exponential backoff |
 | `fetch_config_from_api(url, retries)` | HTTP GET with retry logic and timeout |
-| `map_agent_name_to_id(agent_name)` | Convert human names to ElevenLabs agent IDs |
 | `write_env_file(config, env_path)` | Generate /tmp/aiflow.env from cloud config |
 | `apply_system_volume(config)` | Set ALSA mixer volume via amixer |
 | `configure_wifi(ssid, password)` | NetworkManager WiFi provisioning |
@@ -1467,7 +1452,7 @@ os.execv → main.py
 [5] HTTP GET: Supabase config API (2-3s)
       ↓
 [6] Parse response:
-      - agent_name → map to AGENT_ID
+      - agent_id → update AGENT_ID
       - volume → apply via amixer
       - input_mode → update env
       ↓
