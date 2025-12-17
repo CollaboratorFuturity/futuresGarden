@@ -325,78 +325,140 @@ def on_nfc_tag_detected(tag_name: str):
             mb.force_turn_end.set()
 
 # ==========================================================================
-# STARTUP TEST AUDIO
+# AGENT GREETING (replaces test.wav playback)
 # ==========================================================================
 
-def play_startup_test_audio():
+async def play_agent_greeting() -> bool:
     """
-    Plays startup test audio (synchronous, non-async).
-    Called before entering splash_idle to confirm audio is working.
-    File location: /home/orb/AIflow/{AGENT_ID}/test.wav
-    """
-    log("🎵 Playing startup test audio...")
-    serial_com.write('L')  # Show loading animation during test audio
+    Start a conversation, play the agent's greeting, then disconnect.
+    Used for startup and hot reload to let user hear the agent's voice/volume.
 
-    # Test audio file path: /home/orb/AIflow/{AGENT_ID}/test.wav
-    test_audio_path = os.path.join("/home/orb/AIflow", AGENT_ID, "test.wav")
+    This replaces the old test.wav file approach - no more per-agent audio files needed.
+
+    Returns:
+        True if successful, False on error
+    """
+    log("🎤 Playing agent greeting...")
+    serial_com.write('L')  # Show loading animation
+
+    headers = [("xi-api-key", API_KEY)]
+
+    # Build TTS config (same as run_session)
+    tts_config = {"output_audio_format": "pcm_16000"}
+    if AGENT_ID == "agent_1701k5bgdzmte5f9q518mge3jsf0":
+        tts_config["volume"] = 5  # Nova volume boost
+        log("🔊 Nova agent detected - setting volume to 1.5x")
+
+    INIT_MSG = {
+        "type": "conversation_initiation_client_data",
+        "conversation_config_override": {
+            "tts": tts_config,
+            "asr": {"input_audio_format": "pcm_16000"}
+        }
+    }
 
     try:
-        if not os.path.exists(test_audio_path):
-            log(f"⚠️ Test audio file not found: {test_audio_path}")
-            log(f"💡 To enable startup test audio, place a 16kHz mono WAV file at:")
-            log(f"   {test_audio_path}")
-            return
+        async with websockets.connect(
+            WS_ENDPOINT + "&inactivity_timeout=60",
+            additional_headers=headers,
+            ping_interval=None,
+            ping_timeout=None,
+            close_timeout=5,
+            max_size=10_000_000
+        ) as ws:
+            log("🔗 Connected for greeting...")
 
-        # Open and validate WAV file
-        with wave.open(test_audio_path, 'rb') as wf:
-            # Validate format
-            if wf.getnchannels() != 1:
-                log(f"⚠️ Test audio must be mono (found {wf.getnchannels()} channels)")
-                return
-            if wf.getframerate() != RATE:
-                log(f"⚠️ Test audio must be {RATE}Hz (found {wf.getframerate()}Hz)")
-                return
-            if wf.getsampwidth() != 2:
-                log(f"⚠️ Test audio must be 16-bit (found {wf.getsampwidth()*8}-bit)")
-                return
+            # Send init message to trigger agent greeting
+            await ws.send(json.dumps(INIT_MSG))
+            await ws.send(json.dumps({"type": "user_activity"}))
 
-            log(f"✓ WAV format validated: {wf.getframerate()}Hz, {wf.getnchannels()}ch, {wf.getsampwidth()*8}-bit")
-
-            # Open speaker
+            # Setup speaker and receive greeting
             speaker = setup_speaker()
+            out_buf = bytearray()
+
+            def drain(pad_final=False):
+                nonlocal out_buf
+                while len(out_buf) >= FRAME_BYTES:
+                    speaker.write(bytes(out_buf[:FRAME_BYTES]))
+                    del out_buf[:FRAME_BYTES]
+                if pad_final and out_buf:
+                    out_buf += b'\x00' * (FRAME_BYTES - len(out_buf))
+                    speaker.write(bytes(out_buf))
+                    out_buf.clear()
 
             try:
-                # Read and play the WAV audio (480 frames = SAMPLES_PER_FRAME)
+                greeting_start = time.time()
+                saw_audio = False
+                last_audio_at = greeting_start
+                GREETING_TIMEOUT = 15.0  # Max wait for greeting
+                IDLE_TIMEOUT = 0.3  # End after 300ms of no audio
+
                 while True:
-                    data = wf.readframes(480)
-                    if not data:
+                    now = time.time()
+
+                    # Absolute timeout
+                    if (now - greeting_start) > GREETING_TIMEOUT:
+                        log("⏰ Greeting timeout reached")
                         break
 
-                    # Pad last chunk if needed
-                    if len(data) < FRAME_BYTES:
-                        data += b'\x00' * (FRAME_BYTES - len(data))
+                    # If we've received audio and it's been quiet, we're done
+                    if saw_audio and (now - last_audio_at) > IDLE_TIMEOUT:
+                        drain(pad_final=True)
+                        log("✅ Agent greeting complete")
+                        break
 
-                    speaker.write(data)
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=0.1)
+                    except asyncio.TimeoutError:
+                        drain()
+                        continue
+                    except websockets.exceptions.ConnectionClosed:
+                        log("🔌 WebSocket closed during greeting")
+                        break
 
-                log("✅ Startup test audio playback complete")
+                    data = json.loads(raw)
+                    typ = data.get("type")
+
+                    if typ == "audio":
+                        b64 = (data.get("audio_event") or {}).get("audio_base_64", "")
+                        if b64:
+                            pcm = base64.b64decode(b64)
+                            out_buf += pcm
+
+                            if not saw_audio:
+                                serial_com.write('O')  # Agent speaking
+                                log("🔊 Greeting audio started")
+
+                            saw_audio = True
+                            last_audio_at = time.time()
+                            drain()
+
+                    elif typ == "ping":
+                        event = data.get("ping_event", {})
+                        event_id = event.get("event_id")
+                        if event_id:
+                            await ws.send(json.dumps({"type": "pong", "event_id": event_id}))
+
+                # Final drain
+                drain(pad_final=True)
 
             finally:
-                safe_close(speaker, "test_speaker")
+                safe_close(speaker, "greeting_speaker")
+
+        log("✅ Greeting playback complete")
+        return True
 
     except Exception as e:
-        log(f"⚠️ Startup test audio error: {e}")
+        log(f"⚠️ Agent greeting error: {e}")
+        import traceback
+        log(f"Traceback: {traceback.format_exc()}")
+        return False
 
 # ==========================================================================
 # HOT RELOAD CONFIGURATION
 # ==========================================================================
 
-# Agent name to ID mapping (copied from config_fetcher.py)
-AGENT_NAME_TO_ID = {
-    "Zane": "uHlKfBtzRYokBFLcCOjq",
-    "Rowan": "agent_01jvs5f45jepab76tr81m51gdx",
-    "Nova": "agent_1701k5bgdzmte5f9q518mge3jsf0",
-    "Cypher": "agent_01jvwd88bdeeftgh3kxrx1k4sk"
-}
+# No longer needed - agent_id comes directly from API
 
 # Volume lookup table (copied from config_fetcher.py)
 VOLUME_MAP = {
@@ -466,24 +528,17 @@ async def hot_reload_config() -> bool:
             return False
 
         # Extract values from config
-        agent_name = config.get("agent_id")
+        new_agent_id = config.get("agent_id")
+        agent_name = config.get("agent_name", "Unknown")  # Optional, for logging
         volume = config.get("volume")
         input_mode = config.get("input_mode", "PTT").upper()
 
-        if not agent_name:
+        if not new_agent_id:
             log("❌ Hot reload failed: No agent_id in config")
             serial_com.write('S' if get_state() == "splash_idle" else 'L')
             return False
 
-        # Map agent name to ID
-        new_agent_id = AGENT_NAME_TO_ID.get(agent_name)
-        if not new_agent_id:
-            log(f"❌ Hot reload failed: Unknown agent name '{agent_name}'")
-            log(f"   Available: {list(AGENT_NAME_TO_ID.keys())}")
-            serial_com.write('S' if get_state() == "splash_idle" else 'L')
-            return False
-
-        log(f"🎭 Agent: {agent_name} → {new_agent_id}")
+        log(f"🎭 Agent: {agent_name} (ID: {new_agent_id})")
 
         # Update volume if provided
         if volume is not None:
@@ -557,34 +612,9 @@ async def hot_reload_config() -> bool:
             set_state("splash_idle")
             await asyncio.sleep(0.5)
 
-        # ALWAYS play test audio (whether agent changed or not)
-        log("🎵 Playing test audio after hot reload...")
-        test_audio_path = os.path.join("/home/orb/AIflow", AGENT_ID, "test.wav")
-
-        try:
-            if os.path.exists(test_audio_path):
-                with wave.open(test_audio_path, 'rb') as wf:
-                    # Validate format
-                    if wf.getnchannels() == 1 and wf.getframerate() == RATE and wf.getsampwidth() == 2:
-                        speaker = setup_speaker()
-                        try:
-                            # Play test audio
-                            while True:
-                                data = wf.readframes(480)
-                                if not data:
-                                    break
-                                if len(data) < FRAME_BYTES:
-                                    data += b'\x00' * (FRAME_BYTES - len(data))
-                                speaker.write(data)
-                            log("✅ Test audio playback complete")
-                        finally:
-                            safe_close(speaker, "reload_test_speaker")
-                    else:
-                        log(f"⚠️ Test audio skipped (invalid format)")
-            else:
-                log(f"⚠️ Test audio file not found: {test_audio_path}")
-        except Exception as audio_err:
-            log(f"⚠️ Test audio playback error: {audio_err}")
+        # ALWAYS play agent greeting (whether agent changed or not)
+        # This lets the user hear the agent's voice and confirm volume
+        await play_agent_greeting()
 
         # ALWAYS return to splash screen
         serial_com.write('S')
@@ -1329,8 +1359,8 @@ async def main_control_loop():
 
     log("🚀 Application starting...")
 
-    # Play startup test audio to confirm audio system is working
-    play_startup_test_audio()
+    # Play agent greeting to confirm audio system and let user hear agent voice
+    await play_agent_greeting()
 
     log("🟢 Entering splash_idle — waiting for NFC tag (TEST or AGENT_START)...")
     serial_com.write('S')  # Splash idle - waiting for NFC scan

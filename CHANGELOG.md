@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.8] - 2025-12-17
+
+### Changed
+
+#### Dynamic Agent System (No More Hardcoded Agent IDs)
+- **Removed agent name-to-ID mapping** - `agent_id` now comes directly from Supabase API
+  - Deleted `AGENT_NAME_TO_ID` dictionary from both `config_fetcher.py` and `main.py`
+  - Deleted `map_agent_name_to_id()` function
+  - Unlimited agents can now be added via Supabase without code changes
+
+#### Live Agent Greeting (Replaces test.wav)
+- **New `play_agent_greeting()` function** - Plays agent's greeting via live WebSocket connection
+  - Connects to ElevenLabs, receives greeting audio, disconnects cleanly
+  - Used for both startup and hot reload
+  - No more per-agent `test.wav` files needed
+- **Removed `play_startup_test_audio()`** - Replaced by `play_agent_greeting()`
+- **Updated `hot_reload_config()`** - Now calls `play_agent_greeting()` instead of inline wav playback
+
+#### Simplified OTA Preservation
+- **Updated `PRESERVE_ITEMS`** in `config_fetcher.py`:
+  - Removed 4 hardcoded agent ID folders
+  - Now preserves only: `beep.wav`, `.service_env`, `nfc_tags.json`
+- **Shared `nfc_tags.json`** - Moved from per-agent folders to root level
+  - Updated `nfc_backend.py` to use `/home/orb/AIflow/nfc_tags.json`
+
+### Removed
+- Per-agent data folders (`{AGENT_ID}/test.wav`, `{AGENT_ID}/nfc_tags.json`)
+- Agent name mapping dictionaries and functions
+- Inline test audio playback code in `hot_reload_config()`
+
+### Benefits
+- **Zero code changes** required when adding new agents
+- **Simpler deployment** - No agent-specific files to manage
+- **Reduced OTA complexity** - Only 3 files to preserve instead of 6+
+- **Always current** - Greeting reflects live agent voice/config
+
+---
+
 ## [1.0.7] - 2025-01-15
 
 ### Fixed
@@ -320,45 +358,6 @@ sudo systemctl daemon-reload
 sudo systemctl restart config_fetcher.service
 ```
 
----
-
-## Known Issues
-
-### v1.0.7
-- Display glitch during speaker playback (voltage drop, hardware issue)
-- No acoustic echo cancellation (speaker audio picked up by microphone)
-- Fixed audio format (16kHz only, no higher quality options)
-
-### All Versions
-- Single WebSocket connection (no concurrent conversations)
-- No offline mode (requires internet connectivity)
-- No multi-user support (no speaker identification)
-
----
-
-## Roadmap
-
-### v1.1.0 (Planned)
-- [ ] Automatic process restart on memory threshold
-- [ ] Configurable sample rates (24kHz, 48kHz)
-- [ ] Improved error recovery (WebSocket reconnect strategies)
-- [ ] Power saving mode (CPU frequency scaling during idle)
-
-### v1.2.0 (Planned)
-- [ ] Acoustic Echo Cancellation (AEC)
-- [ ] Hardware AEC-enabled audio interface support
-- [ ] Noise suppression (RNNoise integration)
-- [ ] Multi-channel audio (stereo output)
-
-### v2.0.0 (Future)
-- [ ] Offline mode with local TTS/ASR
-- [ ] Multi-user support (voice biometrics)
-- [ ] Web UI for device configuration
-- [ ] Mobile app for setup and control
-- [ ] Real-time monitoring dashboard
-
----
-
 ## Contributing
 
 When contributing to this project, please:
@@ -413,7 +412,7 @@ Fixes #42
 
 **For issues or questions:**
 - Open an issue on GitHub
-- Email: support@futurityengineering.com
+- Email: lynch@futuritysystems.com
 
 ---
 

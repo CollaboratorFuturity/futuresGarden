@@ -27,7 +27,7 @@ class NfcReader:
     Background NFC loop:
       - Reads PN532 (I2C)
       - Debounces same UID for debounce_s
-      - Looks up UID in <base_dir>/<agent_id>/nfc_tags.json
+      - Looks up UID in <base_dir>/nfc_tags.json (shared for all agents)
       - Sends phrase to ElevenLabs over the active websocket via asyncio.run_coroutine_threadsafe
     """
     def __init__(self, agent_id: str, base_dir: str, debounce_s: float = 1.5, log=print, tags_url: str = None, tag_callback=None):
@@ -61,7 +61,8 @@ class NfcReader:
 
     # ---------------- Tag map ----------------
     def _tags_path(self) -> str:
-        return os.path.join(self.base_dir, self.agent_id, "nfc_tags.json")
+        # Use shared nfc_tags.json at root level (no per-agent folders)
+        return os.path.join(self.base_dir, "nfc_tags.json")
 
     def _load_tags(self):
         import json

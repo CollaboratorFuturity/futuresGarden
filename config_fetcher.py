@@ -447,15 +447,12 @@ def check_and_apply_updates():
     CODE_DIR = "/home/orb/AIflow"
     BACKUP_DIR = "/home/orb/AIflow.backup"
 
-    # Data folders/files to preserve during update
-    # These are agent-specific data folders (named by agent ID, not agent name)
+    # Files to preserve during update
+    # Agent folders no longer needed - greeting is played live via WebSocket
     PRESERVE_ITEMS = [
-        "uHlKfBtzRYokBFLcCOjq",                    # Zane
-        "agent_01jvs5f45jepab76tr81m51gdx",        # Rowan
-        "agent_1701k5bgdzmte5f9q518mge3jsf0",      # Nova
-        "agent_01jvwd88bdeeftgh3kxrx1k4sk",        # Cypher
-        "beep.wav",                                 # Shared beep sound
-        ".service_env",                             # Service environment secrets
+        "beep.wav",       # NFC scan feedback sound
+        ".service_env",   # Service environment secrets (API keys, DEVICE_ID)
+        "nfc_tags.json",  # NFC tag mappings (fallback if GitHub fetch fails)
     ]
 
     logger.info("=" * 50)

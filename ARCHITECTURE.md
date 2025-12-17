@@ -1441,12 +1441,10 @@ rwro      # Show current state
 ```
 Config & Credentials:
   /home/orb/AIflow/.service_env         (RW: Device ID, API keys)
+  /home/orb/AIflow/nfc_tags.json        (RW: NFC tag mappings, shared)
+  /home/orb/AIflow/beep.wav             (RW: NFC feedback sound)
   /etc/NetworkManager/system-connections/ (RW: WiFi profiles)
   /boot/config.txt                      (RW: Hardware config)
-
-Agent Data (per-agent):
-  /home/orb/AIflow/{AGENT_ID}/test.wav     (RW: Startup audio)
-  /home/orb/AIflow/{AGENT_ID}/nfc_tags.json (RW: Tag mappings)
 
 Volatile Data (lost on reboot):
   /tmp/aiflow.env                       (tmpfs: Runtime config)
@@ -1460,11 +1458,11 @@ Volatile Data (lost on reboot):
 # config_fetcher.py: check_and_apply_updates()
 
 # Files to preserve (NOT overwritten by update):
-PRESERVE_PATTERNS = [
-    ".service_env",        # Device credentials
-    "*/test.wav",          # Agent-specific audio
-    "*/nfc_tags.json",     # Agent-specific NFC tags
-    "beep.wav",            # NFC feedback sound
+# Note: Agent folders no longer needed - greeting is played live via WebSocket
+PRESERVE_ITEMS = [
+    "beep.wav",       # NFC scan feedback sound
+    ".service_env",   # Service environment secrets (API keys, DEVICE_ID)
+    "nfc_tags.json",  # NFC tag mappings (fallback if GitHub fetch fails)
 ]
 
 # Update logic:
@@ -1473,13 +1471,11 @@ PRESERVE_PATTERNS = [
 3. Validate critical files exist
 4. Backup current:
      cp -r /home/orb/AIflow /home/orb/AIflow.backup
-5. Copy new files:
-     rsync -av --exclude-from=PRESERVE_PATTERNS /tmp/AIflow_new/ /home/orb/AIflow/
-6. Restore preserved files:
-     for pattern in PRESERVE_PATTERNS:
-         cp /home/orb/AIflow.backup/{pattern} /home/orb/AIflow/{pattern}
-7. Update version file
-8. Clean up temp files
+5. Preserve config files to temp location
+6. Replace AIflow/ with new code
+7. Restore preserved files
+8. Update version file
+9. Clean up temp files
 ```
 
 ---

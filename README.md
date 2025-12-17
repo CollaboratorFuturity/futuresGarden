@@ -58,10 +58,7 @@ The Orb is a production-grade voice agent system running on Raspberry Pi Zero W 
 ├── .service_env                 # Service environment variables
 ├── version                      # Current version (v1.0.7)
 │
-├── {AGENT_ID}/                  # Per-agent data directories
-│   ├── test.wav                 # Startup test audio
-│   └── nfc_tags.json            # NFC tag mappings (hot-swappable)
-│
+├── nfc_tags.json                # NFC tag mappings (shared, hot-swappable)
 ├── beep.wav                     # NFC scan feedback sound
 │
 └── /tmp/
@@ -471,7 +468,7 @@ Check GitHub releases for updates
   ├─ Validate (check critical files)
   ├─ Backup current installation
   ├─ Extract to AIflow/
-  ├─ Preserve agent data folders
+  ├─ Preserve config files (beep.wav, .service_env, nfc_tags.json)
   ├─ Update version file
   └─ [If validation fails: restore backup]
   ↓
