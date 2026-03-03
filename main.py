@@ -393,7 +393,7 @@ async def play_agent_greeting() -> bool:
                 saw_audio = False
                 last_audio_at = greeting_start
                 GREETING_TIMEOUT = 15.0  # Max wait for greeting
-                IDLE_TIMEOUT = 0.3  # End after 300ms of no audio
+                IDLE_TIMEOUT = 2.0  # End after 2s of no audio (covers natural pauses + network jitter)
 
                 while True:
                     now = time.time()
