@@ -302,9 +302,10 @@ def on_nfc_tag_detected(tag_name: str):
 
     current_state = get_state()
 
-    if tag_name == "TEST":
-        # TEST tag = hot reload configuration from API (fast: 2-3s)
-        log("🔄 TEST tag scanned - initiating hot reload...")
+    if tag_name == "TEST" or (tag_name == "AGENT_START" and current_state == "running_agent"):
+        # TEST tag or AGENT_START during session = hot reload config + return to splash
+        reason = "TEST tag" if tag_name == "TEST" else "AGENT_START during session"
+        log(f"🔄 {reason} scanned - initiating hot reload...")
 
         # Schedule hot reload using thread-safe method
         if MAIN_EVENT_LOOP:
@@ -313,6 +314,7 @@ def on_nfc_tag_detected(tag_name: str):
             log("❌ Hot reload failed: Event loop not available")
 
     elif tag_name == "AGENT_START":
+        # AGENT_START from splash_idle = start conversation
         set_state("running_agent")
     else:
         # Known tag but not TEST or AGENT_START - show NFC animation
