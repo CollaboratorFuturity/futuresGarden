@@ -17,7 +17,7 @@ fi
 
 # Paths
 AIFLOW_DIR="/home/orb/AIflow"          # Python scripts and .service_env
-SERVICE_DIR="/home/orb/services"        # Service files location
+SERVICE_DIR="$AIFLOW_DIR"               # Service files are in the same directory
 SERVICE_ENV="$AIFLOW_DIR/.service_env"
 SYSTEMD_DIR="/etc/systemd/system"
 

@@ -9,11 +9,13 @@ import os
 import sys
 import time
 import json
+import socket
 import logging
 import subprocess
 import requests
 from pathlib import Path
 from typing import Dict, Optional
+from constants import VOLUME_MAP
 
 # Configuration
 # Get DEVICE_ID from system environment (must be set before running this script)
@@ -63,12 +65,13 @@ def wait_for_network(timeout: int = NETWORK_WAIT_TIMEOUT) -> bool:
     
     while time.time() - start_time < timeout:
         try:
-            # Try to reach a reliable DNS server
-            response = requests.get("https://1.1.1.1", timeout=3)
-            if response.status_code == 200:
-                logger.info("Network connectivity confirmed")
-                return True
-        except requests.RequestException:
+            # Raw TCP to Google DNS — no TLS overhead, no entropy dependency.
+            # HTTPS handshakes can take 5-10s on Pi Zero W, exceeding timeouts.
+            conn = socket.create_connection(("8.8.8.8", 53), timeout=3)
+            conn.close()
+            logger.info("Network connectivity confirmed")
+            return True
+        except (socket.timeout, socket.error, OSError):
             logger.debug("Network not ready, waiting...")
             time.sleep(2)
     
@@ -205,37 +208,19 @@ def apply_system_volume(config: Dict) -> bool:
     """
     Set system volume using ALSA amixer command.
     Uses a 1-10 scale mapped to calibrated raw values for proper dB scaling.
-    
-    Volume Mapping:
-    10 → 127 (100%), 9 → 124 (89%), 8 → 121 (79%), 7 → 118 (71%)
-    6 → 114 (61%), 5 → 110 (52%), 4 → 104 (41%), 3 → 96 (30%)
-    2 → 85 (20%), 1 → 65 (9%)
-    
+    Volume map is imported from constants.py (shared with main.py hot reload).
+
     Args:
         config: Configuration dictionary containing 'volume' key (1-10)
-        
+
     Returns:
         True if successful, False otherwise
     """
     volume = config.get("volume")
-    
+
     if volume is None:
         logger.warning("No volume setting in configuration, skipping volume adjustment")
         return True
-    
-    # Volume lookup table: API value (1-10) → Raw ALSA value → Actual %
-    VOLUME_MAP = {
-        10: 124,  # 100%
-        9: 120,   # 89%
-        8: 117,   # 79%
-        7: 113,   # 71%
-        6: 108,   # 61%
-        5: 103,   # 52%
-        4: 90,   # 41%
-        3: 80,    # 30%
-        2: 70,    # 20%
-        1: 0     # 9%
-    }
     
     try:
         volume_int = int(volume)
@@ -334,24 +319,27 @@ def configure_wifi(ssid: str, password: str) -> bool:
     
     try:
         logger.info(f"Configuring WiFi network: {ssid}")
-        
+
         # Check if nmcli is available
         try:
             subprocess.run(["nmcli", "--version"], capture_output=True, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError):
             logger.error("nmcli not found - is NetworkManager installed?")
             return False
-        
-        # Check if connection already exists (do this FIRST to avoid unnecessary operations)
-        check_result = subprocess.run(
-            ["nmcli", "connection", "show", ssid],
-            capture_output=True,
-            text=True
-        )
-        
-        if check_result.returncode == 0:
-            logger.info(f"WiFi network '{ssid}' already saved - skipping configuration")
-            return True
+
+        # Check if already connected to this SSID by checking the actual WiFi SSID
+        # (connection profile name can differ, e.g. "preconfigured" instead of the SSID)
+        try:
+            wifi_result = subprocess.run(
+                ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in wifi_result.stdout.strip().split('\n'):
+                if line.startswith("yes:") and line.split(":", 1)[1] == ssid:
+                    logger.info(f"Already connected to WiFi '{ssid}' - skipping configuration")
+                    return True
+        except Exception as e:
+            logger.debug(f"Active SSID check failed: {e}")
         
         # Connection doesn't exist - need to configure it
         # Ensure NetworkManager connections mount is writable
@@ -722,27 +710,26 @@ def main():
     logger.info("AIflow Configuration Fetcher Started...")
     logger.info("=" * 50)
     
-    # Step 1: Wait for network (expect setup hotspot or existing connection)
-    if not wait_for_network():
-        logger.warning("No network connectivity on startup")
-        
-        # Try to load and connect to saved WiFi
-        saved_wifi = load_saved_wifi()
-        if saved_wifi:
-            ssid, password = saved_wifi
-            logger.info(f"Attempting to connect to saved WiFi: {ssid}")
-            if configure_wifi(ssid, password):
-                logger.info("Connected to saved WiFi, waiting for network...")
-                if not wait_for_network(timeout=30):
-                    logger.error("Still no network after WiFi connection")
-                    sys.exit(1)
+    # Step 1: Wait for network (retry indefinitely — don't crash-loop via systemd)
+    # The Pi may already be on WiFi but the internet gateway isn't routed yet.
+    # Crashing and restarting wastes ~80s per cycle; retrying in-process is faster.
+    wifi_attempted = False
+    while not wait_for_network():
+        logger.warning("No network connectivity")
+
+        # Try saved WiFi once (in case we're not connected at all)
+        if not wifi_attempted:
+            saved_wifi = load_saved_wifi()
+            if saved_wifi:
+                ssid, password = saved_wifi
+                logger.info(f"Attempting to connect to saved WiFi: {ssid}")
+                configure_wifi(ssid, password)
             else:
-                logger.error("Failed to connect to saved WiFi")
-                sys.exit(1)
-        else:
-            logger.error("No saved WiFi found and no network available")
-            logger.error("Expected to connect to setup hotspot first!")
-            sys.exit(1)
+                logger.info("No saved WiFi config — already on network or waiting for gateway")
+            wifi_attempted = True
+
+        logger.info("Retrying network check in 10 seconds...")
+        time.sleep(10)
     
     # Step 2: Fetch configuration from API
     config = fetch_config_from_api(API_URL)

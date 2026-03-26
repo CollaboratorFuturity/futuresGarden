@@ -1,3 +1,9 @@
+"""
+Serial communication with The Orb's LED co-processor.
+Sends single-char commands over UART to drive LED animations:
+S=splash, L=loading, O=speaking, M=muted, U=unmuted, N=NFC, B=boot, D=dying, V=battery.
+Used by: main.py, battery_log.py, mute_button.py
+"""
 import os
 import sys
 import threading

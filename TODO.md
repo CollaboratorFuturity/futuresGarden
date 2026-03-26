@@ -20,23 +20,8 @@ force_turn_end = threading.Event()
 
 ---
 
-### 2. VOLUME_MAP mismatch between boot and hot reload
-**Files:** `config_fetcher.py:227-238` (boot) vs `main.py:464-475` (hot reload)
-
-The volume lookup tables have different raw ALSA values for the same level:
-
-| Level | config_fetcher (boot) | main.py (hot reload) |
-|-------|---|---|
-| 9 | 120 | 121 |
-| 8 | 117 | 118 |
-| 7 | 113 | 114 |
-| 6 | 108 | 110 |
-| 5 | 103 | 104 |
-| 4 | 90 | 96 |
-| 3 | 80 | 85 |
-| 2 | 70 | 65 |
-
-**Impact:** Volume set at boot differs from volume after a TEST-tag hot reload, even with the same config value. User hears a volume jump on hot reload.
+### ~~2. VOLUME_MAP mismatch between boot and hot reload~~ FIXED
+Extracted to shared `constants.py`. Both `config_fetcher.py` and `main.py` now import from the same source.
 
 ---
 
@@ -81,17 +66,8 @@ Same issue applies to `hot_reload_config` — it calls `play_agent_greeting()` w
 
 ## Dead Ends
 
-### 7. `AGENT_START` during `running_agent` is a no-op
-**File:** `main.py:315-316`
-
-If the conversation is stuck (WebSocket dead, reconnect backoff), scanning `AGENT_START` again does nothing:
-
-```python
-elif tag_name == "AGENT_START":
-    set_state("running_agent")  # already running_agent → no-op
-```
-
-No way for the user to force-restart a stale session. The reconnect backoff loop continues for up to 10 seconds per cycle with no user recourse.
+### ~~7. `AGENT_START` during `running_agent` is a no-op~~ FIXED
+`AGENT_START` during an active session now triggers `hot_reload_config()` (same as TEST tag), ending the session and returning to splash.
 
 ---
 

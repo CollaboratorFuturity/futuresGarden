@@ -1,3 +1,8 @@
+"""
+INA219 current/voltage sensor driver (I2C via smbus).
+Configured for 16V/5A range with 0.01 ohm shunt resistor.
+Used by: battery_log.py
+"""
 import smbus
 import time
 

@@ -1,3 +1,9 @@
+"""
+Core voice agent application for The Orb.
+Manages WebSocket sessions with ElevenLabs, audio I/O, NFC interaction,
+and the splash_idle / running_agent state machine.
+Service: config_fetcher.service (exec'd into from config_fetcher.py)
+"""
 import asyncio
 import os
 import time
@@ -19,6 +25,7 @@ from typing import Optional, Dict
 from mute_button import start_mute_button, is_muted, stop_mute_button, set_state_check, set_mode
 import serial_com
 import nfc_backend
+from constants import VOLUME_MAP
 from dotenv import load_dotenv
 
 # ── ALSA: suppress warnings ───────────────────────────────────────────────
@@ -40,6 +47,11 @@ detail = True  # Detailed logging enabled for debugging audio timing issues
 # Devices
 MIC_DEVICE = os.getenv("MIC_DEVICE", "plughw:0,0")
 SPK_DEVICE = os.getenv("SPK_DEVICE", "plughw:0,0")
+
+# Paths
+BEEP_PATH = "/home/orb/AIflow/beep.wav"
+NFC_BASE_DIR = "/home/orb/AIflow"
+NFC_TAGS_URL = "https://raw.githubusercontent.com/CollaboratorFuturity/futuresGarden/main/nfc_tags.json"
 
 # Audio constants
 RATE = 16000
@@ -92,7 +104,6 @@ STOP = False
 
 # NFC reader will be initialized after on_nfc_tag_detected is defined
 nfc = None
-NFC_TAGS_URL = "https://raw.githubusercontent.com/CollaboratorFuturity/futuresGarden/main/nfc_tags.json"
 
 # Global event loop reference for thread-safe async task scheduling
 MAIN_EVENT_LOOP = None
@@ -261,7 +272,7 @@ def play_beep():
     Looks for beep.wav in: /home/orb/AIflow/beep.wav
     """
     serial_com.write('L')  # Show loading animation for all NFC scans
-    beep_path = "/home/orb/AIflow/beep.wav"
+    beep_path = BEEP_PATH
     
     if not os.path.exists(beep_path):
         # No beep file, silently skip
@@ -460,21 +471,7 @@ async def play_agent_greeting() -> bool:
 # HOT RELOAD CONFIGURATION
 # ==========================================================================
 
-# No longer needed - agent_id comes directly from API
-
-# Volume lookup table (copied from config_fetcher.py)
-VOLUME_MAP = {
-    10: 124,  # 100%
-    9: 121,   # 89%
-    8: 118,   # 79%
-    7: 114,   # 71%
-    6: 110,   # 61%
-    5: 104,   # 52%
-    4: 96,    # 41%
-    3: 85,    # 30%
-    2: 65,    # 20%
-    1: 0      # 9%
-}
+# VOLUME_MAP imported from constants.py (shared with config_fetcher.py)
 
 async def hot_reload_config() -> bool:
     """
@@ -1338,7 +1335,7 @@ async def run_session():
 # Initialize NFC reader with callback (after on_nfc_tag_detected is defined)
 nfc = nfc_backend.NfcReader(
     agent_id=AGENT_ID,
-    base_dir="/home/orb/AIflow",
+    base_dir=NFC_BASE_DIR,
     debounce_s=1.5,
     log=print,
     tags_url=NFC_TAGS_URL,

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+Battery monitor and safe shutdown for The Orb.
+Reads INA219 sensor, uploads telemetry to Supabase, triggers
+safe shutdown on critical voltage or Pi under-voltage.
+Service: battery_log.service (independent process)
+"""
 import os
 import time
 import json

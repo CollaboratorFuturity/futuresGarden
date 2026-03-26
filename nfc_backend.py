@@ -1,3 +1,9 @@
+"""
+NFC tag reader for The Orb (PN532 over I2C).
+Background thread polls for tags, maps UIDs to phrases via nfc_tags.json,
+and sends them to the ElevenLabs agent over WebSocket.
+Used by: main.py
+"""
 import os
 import json
 import time

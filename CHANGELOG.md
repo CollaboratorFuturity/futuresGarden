@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.2] - 2026-03-26
+
+### Fixed
+
+#### AGENT_START During Active Session
+- Scanning `AGENT_START` while a conversation is running now triggers a hot reload (same as `TEST` tag) instead of being a no-op that left the LED stuck on loading
+
+#### Agent Greeting Playback
+- Increased `IDLE_TIMEOUT` in `play_agent_greeting()` from 0.3s to 2.0s — greeting was cutting off after ~1 second because inter-chunk gaps exceeded the timeout
+
+#### Boot Performance (config_fetcher.py)
+- **Network check**: Replaced `requests.get("https://1.1.1.1")` with raw TCP socket to `8.8.8.8:53` — TLS handshakes were timing out on Pi Zero W's slow CPU, causing 20+ minute boot delays
+- **Network retry**: No longer crash-loops via systemd on network failure — retries in-process, eliminating ~20s restart overhead per cycle
+- **WiFi skip**: Now checks active SSID via `nmcli -t -f active,ssid dev wifi` instead of connection profile name (which could be "preconfigured" instead of the SSID) — saves ~10s per boot by skipping unnecessary remount/reload/reconnect
+
+#### Install Script
+- Fixed `install_services.sh` — `SERVICE_DIR` pointed to `/home/orb/services` instead of `$AIFLOW_DIR`
+
+#### Volume Consistency
+- Extracted `VOLUME_MAP` to shared `constants.py` — boot and hot reload now use identical calibrated values (were previously mismatched)
+
+### Added
+- `constants.py` — single source of truth for shared config values (VOLUME_MAP)
+- `QUICKREF.md` — one-page developer reference (module map, boot sequence, state machine, serial protocol, paths, APIs)
+
+### Changed
+- Standardized docstring headers across all 7 Python files (purpose, service relationship, consumers)
+- Centralized hardcoded paths in `main.py` to config section (`BEEP_PATH`, `NFC_BASE_DIR`, `NFC_TAGS_URL`)
+
+---
+
 ## [1.0.8] - 2025-12-17
 
 ### Changed

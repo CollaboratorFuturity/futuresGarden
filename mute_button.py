@@ -1,6 +1,9 @@
-# mute_button.py
-# Threaded mute toggle on GPIO12 (to GND) using Blinka (board, digitalio).
-# Exposes: start_mute_button(), is_muted(), stop_mute_button()
+"""
+GPIO push-button handler for The Orb (GPIO12, active-low with pull-up).
+Supports PTT (push-to-talk) and VAD (toggle mute) modes.
+Exposes: start_mute_button(), is_muted(), stop_mute_button(), force_turn_end
+Used by: main.py
+"""
 
 import time
 import threading
