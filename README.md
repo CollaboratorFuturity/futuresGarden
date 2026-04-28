@@ -355,22 +355,13 @@ CRITICAL_COUNT_THRESHOLD = 3               # Consecutive critical readings befor
 
 ### Network Endpoints
 
-```python
-# Configuration API
-CONFIG_API = "https://tfsoetwarrsmynpxeazw.supabase.co/functions/v1/get-device-config?device_id={DEVICE_ID}"
-
-# Battery telemetry API
-BATTERY_API = "https://tfsoetwarrsmynpxeazw.supabase.co/functions/v1/update-battery"
-
-# NFC tag library (hot-swappable)
-NFC_TAGS_URL = "https://raw.githubusercontent.com/CollaboratorFuturity/futuresGarden/main/nfc_tags.json"
-
-# OTA updates
-GITHUB_RELEASES = "https://api.github.com/repos/CollaboratorFuturity/futuresGarden/releases/latest"
-
-# ElevenLabs WebSocket
-ELEVENLABS_WS = "wss://api.elevenlabs.io/v1/convai/conversation?agent_id={AGENT_ID}"
-```
+| Purpose | Service |
+|---|---|
+| Device configuration | Supabase Edge Function (URL in `config_fetcher.py`) |
+| Battery telemetry | Supabase Edge Function (URL in `battery_log.py`) |
+| NFC tag library | GitHub raw content (this repo) |
+| OTA updates | GitHub Releases API (this repo) |
+| Voice agent | ElevenLabs Conversational AI WebSocket |
 
 ---
 
@@ -993,71 +984,19 @@ ws = await websockets.connect(
 
 ### Supabase Configuration API
 
-**Endpoint:**
-```
-GET https://tfsoetwarrsmynpxeazw.supabase.co/functions/v1/get-device-config
-```
+Fetches device configuration on boot. Authenticated with `LOVABLE_API_KEY` and scoped to a `DEVICE_ID`. Returns agent assignment, volume, input mode, and WiFi credentials.
 
-**Query Parameters:**
-```
-?device_id={DEVICE_ID}
-```
-
-**Headers:**
-```
-Authorization: Bearer {LOVABLE_API_KEY}
-```
-
-**Response Format:**
-```json
-{
-  "agent_name": "Zane",
-  "volume": 7,
-  "input_mode": "PTT",
-  "device_name": "The Orb",
-  "wifi_ssid": "network_name",
-  "wifi_password": "password123"
-}
-```
-
-**Retry Logic:**
-- 5 attempts
-- 10s timeout per attempt
-- Exponential backoff: 2s, 4s, 8s, 16s, 32s
+**Retry logic:** 5 attempts, 10s timeout per attempt.
 
 ---
 
 ### Supabase Battery Telemetry API
 
-**Endpoint:**
-```
-POST https://tfsoetwarrsmynpxeazw.supabase.co/functions/v1/update-battery
-```
+Uploads battery readings (voltage, current, percent, temperature) from `battery_log.py`.
 
-**Headers:**
-```
-Authorization: Bearer {LOVABLE_API_KEY}
-Content-Type: application/json
-```
-
-**Payload:**
-```json
-{
-  "device_id": "orb_001",
-  "battery_percent": 87.5,
-  "voltage": 3.98,
-  "current_ma": 150.2,
-  "power_w": 0.597,
-  "temperature_c": 45.3,
-  "memory_mb": 123,
-  "throttled": false,
-  "timestamp": "2025-01-15T12:34:56.789Z"
-}
-```
-
-**Upload Strategy:**
-- Queue-based (persistent to /tmp/battery_queue.json)
-- Batch upload every 90s
+**Upload strategy:**
+- Queue-based (persistent to `/tmp/battery_queue.json`)
+- Uploads every 90s
 - Non-blocking (separate thread)
 - Retry on failure (3 attempts, 5s timeout)
 
@@ -1065,39 +1004,15 @@ Content-Type: application/json
 
 ### GitHub Releases API (OTA Updates)
 
-**Endpoint:**
-```
-GET https://api.github.com/repos/CollaboratorFuturity/futuresGarden/releases/latest
-```
+Checks the latest release tag against the local `version` file on every boot. If a newer version is available, downloads the release tarball and installs it.
 
-**Response Fields Used:**
-```json
-{
-  "tag_name": "v1.0.8",
-  "tarball_url": "https://api.github.com/repos/.../tarball/v1.0.8"
-}
-```
-
-**Version Comparison:**
-```python
-current = "v1.0.7"
-latest = "v1.0.8"
-
-# Parse semantic version (strip 'v' prefix)
-def parse_version(v):
-    return tuple(map(int, v.lstrip('v').split('.')))
-
-if parse_version(latest) > parse_version(current):
-    # Download and install update
-```
-
-**Download & Install:**
+**Download & install:**
 1. Download tarball (5 min timeout)
 2. Extract to temp directory
-3. Validate critical files exist (main.py, config_fetcher.py, etc.)
+3. Validate critical files exist (`main.py`, `config_fetcher.py`, etc.)
 4. Backup current installation
-5. Copy new files to AIflow/
-6. Preserve agent data folders and .service_env
+5. Copy new files to `AIflow/`
+6. Preserve `beep.wav`, `.service_env`, `nfc_tags.json`
 7. Update version file
 8. On failure: restore backup
 
