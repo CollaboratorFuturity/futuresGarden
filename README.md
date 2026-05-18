@@ -1,6 +1,6 @@
 # The Orb - Voice Agent System
 
-**Version:** v1.0.7
+**Version:** v1.2
 **Platform:** Raspberry Pi Zero W 1.1
 **Status:** Production
 
@@ -42,13 +42,14 @@ The Orb is a production-grade voice agent system running on Raspberry Pi Zero W 
 
 ```
 /home/orb/AIflow/
-├── main.py                      # Main voice agent application (1,393 lines)
-├── config_fetcher.py            # Startup config loader + OTA updater (823 lines)
-├── serial_com.py                # Display serial communication (193 lines)
-├── mute_button.py               # GPIO button handler (193 lines)
-├── nfc_backend.py               # NFC tag reader (291 lines)
-├── battery_log.py               # Battery monitoring service (332 lines)
-├── INA219.py                    # INA219 sensor driver (214 lines)
+├── main.py                      # Main voice agent application
+├── config_fetcher.py            # Startup config loader + OTA updater
+├── serial_com.py                # Display serial communication
+├── mute_button.py               # GPIO button handler
+├── nfc_backend.py               # NFC tag reader
+├── battery_log.py               # Battery monitoring service
+├── INA219.py                    # INA219 sensor driver
+├── constants.py                 # Shared constants (VOLUME_MAP)
 │
 ├── config_fetcher.service       # Systemd service for startup
 ├── battery_log.service          # Systemd service for battery monitor
@@ -56,10 +57,15 @@ The Orb is a production-grade voice agent system running on Raspberry Pi Zero W 
 ├── check_services.sh            # Service status checker
 │
 ├── .service_env                 # Service environment variables
-├── version                      # Current version (v1.0.7)
+├── version                      # Current version (v1.2)
 │
 ├── nfc_tags.json                # NFC tag mappings (shared, hot-swappable)
 ├── beep.wav                     # NFC scan feedback sound
+│
+├── ARCHITECTURE.md              # System architecture deep-dive
+├── CHANGELOG.md                 # Version history
+├── QUICKREF.md                  # Quick reference card
+├── TODO.md                      # Pending work
 │
 └── /tmp/
     ├── aiflow.env               # Runtime config (tmpfs)
@@ -68,17 +74,18 @@ The Orb is a production-grade voice agent system running on Raspberry Pi Zero W 
 
 ### File Descriptions
 
-| File | Purpose | Critical |
-|------|---------|----------|
-| `main.py` | Core application: WebSocket streaming, audio I/O, turn management | ✓ |
-| `config_fetcher.py` | Startup orchestrator: config fetch, OTA updates, process handoff | ✓ |
-| `battery_log.py` | Independent battery monitor with telemetry and auto-shutdown | ✓ |
-| `serial_com.py` | Display controller communication (animations, status) | ✓ |
-| `mute_button.py` | GPIO button with mode-aware behavior (PTT/VAD) | ✓ |
-| `nfc_backend.py` | PN532 NFC reader with hot-reload capability | ✓ |
-| `INA219.py` | I2C battery sensor driver (voltage, current, power) | ✓ |
-| `.service_env` | Device ID and API keys (persisted) | ✓ |
-| `version` | Semantic version string for OTA updates | ✓ |
+| File | Purpose |
+|------|---------|
+| `main.py` | Core application: WebSocket streaming, audio I/O, turn management |
+| `config_fetcher.py` | Startup orchestrator: config fetch, OTA updates, process handoff |
+| `battery_log.py` | Independent battery monitor with telemetry and auto-shutdown |
+| `serial_com.py` | Display controller communication (animations, status) |
+| `mute_button.py` | GPIO button with mode-aware behavior (PTT/VAD) |
+| `nfc_backend.py` | PN532 NFC reader with hot-reload capability |
+| `INA219.py` | I2C battery sensor driver (voltage, current, power) |
+| `constants.py` | Single source of truth for `VOLUME_MAP` (used by `main.py` and `config_fetcher.py`) |
+| `.service_env` | Device ID and API keys (persisted) |
+| `version` | Semantic version string for OTA updates |
 
 ---
 
@@ -111,14 +118,14 @@ The Orb is a production-grade voice agent system running on Raspberry Pi Zero W 
 | Component | Interface | Purpose |
 |-----------|-----------|---------|
 | **INA219 Sensor** | I2C address 0x43 | Voltage/current/power monitoring |
-| **Battery** | Direct | LiPo 3.55V-4.15V range |
-| **Voltage Thresholds** | - | Low: 3.65V, Critical: 3.55V |
+| **Battery** | Direct | LiPo (operating window 3.7V-4.05V used for percent calc) |
+| **Voltage Thresholds** | - | Low: 3.8V, Critical: 3.7V |
 
 ### Display
 
 - **Interface:** Serial UART (USB or direct UART)
 - **Protocol:** Single-byte commands (115200 baud, 8N1)
-- **Commands:** S, L, U, M, O, N, V, D, B (splash, loading, unmuted, muted, agent speaking, NFC, voltage low, dead, bye)
+- **Commands:** S, L, U, M, O, N, V, D, B (splash, loading, unmuted, muted, agent speaking, NFC, voltage low, dying, boot)
 
 ### Pin Mapping
 
@@ -291,22 +298,24 @@ WIFI_PASSWORD=your_password
 
 ### Volume Calibration (1-10 scale → ALSA raw values)
 
+Defined in [constants.py](constants.py) — single source of truth shared by `config_fetcher.py` (boot) and `main.py` (hot reload). Calibrated for the Orb's speaker + amplifier hardware.
+
 ```python
 VOLUME_MAP = {
-    10: 120,  # Maximum
-    9:  117,
-    8:  113,
-    7:  109,
-    6:  103,
-    5:  95,
-    4:  84,
-    3:  64,
-    2:  44,
-    1:  0     # Minimum (not muted, just very quiet)
+    10: 124,  # 100%
+    9:  121,  # 89%
+    8:  118,  # 79%
+    7:  114,  # 71%
+    6:  110,  # 61%
+    5:  104,  # 52%
+    4:  96,   # 41%
+    3:  85,   # 30%
+    2:  65,   # 20%
+    1:  0     # mute
 }
 ```
 
-### Audio Constants (main.py lines 44-53)
+### Audio Constants
 
 ```python
 RATE = 16000                               # Sample rate (Hz)
@@ -318,7 +327,7 @@ BYTES_PER_SAMPLE = 2                       # 16-bit = 2 bytes
 FRAME_BYTES = 960                          # 480 samples × 2 bytes
 ```
 
-### VAD Parameters (main.py lines 55-64)
+### VAD Parameters
 
 ```python
 VAD_MODE = 3                               # WebRTC VAD aggressiveness (0-3, 3=most aggressive)
@@ -332,7 +341,7 @@ MIN_CHUNKS = 20                            # 600ms / 30ms
 END_SILENCE_CHUNKS = 50                    # 1500ms / 30ms (1.5 seconds of silence)
 ```
 
-### Response Handling (main.py lines 66-70)
+### Response Handling
 
 ```python
 FIRST_CONTENT_MAX = 15.0                   # Max wait for first agent response (seconds)
@@ -345,12 +354,13 @@ FIRST_TURN_BARGE_AFTER_MS = 500            # Barge-in delay for first turn greet
 ### Battery Thresholds (battery_log.py)
 
 ```python
-LOW_VOLTAGE_THRESHOLD = 3.65               # Show low battery warning (volts)
-CRITICAL_VOLTAGE_THRESHOLD = 3.55          # Trigger shutdown (volts)
-CHECK_INTERVAL = 30                        # Battery check frequency (seconds)
-UPLOAD_INTERVAL = 90                       # Telemetry upload frequency (seconds)
-LOW_COUNT_THRESHOLD = 3                    # Consecutive low readings before warning
-CRITICAL_COUNT_THRESHOLD = 3               # Consecutive critical readings before shutdown
+LOW_VOLTAGE       = 3.8        # Show low battery warning (volts)
+CRITICAL_VOLTAGE  = 3.7        # Trigger shutdown (volts)
+VOLTAGE_THRESHOLD = 0.35       # Span used for percent calc → 0%=3.7V, 100%=4.05V
+CHECK_INTERVAL    = 30         # Battery check frequency (seconds)
+SEND_INTERVAL     = 90         # Telemetry upload frequency (seconds)
+LOW_COUNT_THRESHOLD       = 3  # Consecutive low readings before warning
+CRITICAL_COUNT_THRESHOLD  = 3  # Consecutive critical readings before shutdown
 ```
 
 ### Network Endpoints
@@ -382,30 +392,31 @@ CRITICAL_COUNT_THRESHOLD = 3               # Consecutive critical readings befor
 
 **Major Functions:**
 
-| Function | Lines | Purpose |
-|----------|-------|---------|
-| `main_control_loop()` | 1318-1393 | Main state machine loop |
-| `run_session()` | 1099-1201 | WebSocket session with conversation loop |
-| `stream_audio_ptt()` | 653-769 | Push-to-talk audio streaming |
-| `stream_audio_vad()` | 771-887 | Voice activity detection audio streaming |
-| `receive_response()` | 889-1097 | Agent response reception and playback |
-| `maintain_pong()` | 197-238 | Background keepalive task (60s interval) |
-| `hot_reload_config()` | 1237-1303 | Fast config refresh (TEST tag) |
+| Function | Purpose |
+|----------|---------|
+| `main_control_loop()` | Main state machine loop |
+| `run_session()` | WebSocket session with conversation loop |
+| `stream_audio_ptt()` | Push-to-talk audio streaming |
+| `stream_audio_vad()` | Voice activity detection audio streaming |
+| `receive_response()` | Agent response reception and playback |
+| `maintain_pong()` | Background keepalive task |
+| `hot_reload_config()` | Fast config refresh (TEST tag, or AGENT_START during a session) |
+| `play_agent_greeting()` | Connects briefly to ElevenLabs and plays the agent's greeting (replaces the old `test.wav` approach) |
 
 **Audio Processing Pipeline:**
 
 ```
 Microphone
     ↓
-ALSA Capture (setup_mic, line 394)
+ALSA Capture (setup_mic)
     ↓
 30ms frame buffering (960 bytes)
     ↓
-WebRTC VAD analysis (is_speech_exact, line 387) [VAD mode only]
+WebRTC VAD analysis (is_speech_exact) [VAD mode only]
     ↓
 Base64 encoding
     ↓
-WebSocket send (send_user_json, line 240)
+WebSocket send (send_user_json)
     ↓
 ElevenLabs API
 ```
@@ -413,15 +424,15 @@ ElevenLabs API
 ```
 ElevenLabs API
     ↓
-WebSocket receive (ws.recv(), line 1023)
+WebSocket receive (ws.recv)
     ↓
-JSON parsing (typ="audio", line 1037)
+JSON parsing (type == "audio")
     ↓
-Base64 decode (line 1040)
+Base64 decode
     ↓
-Frame buffering (out_buf, line 1041)
+Frame buffering (out_buf)
     ↓
-ALSA Playback (drain, line 963)
+ALSA Playback (drain)
     ↓
 Speaker
 ```
@@ -500,8 +511,8 @@ main.py takes over
 - Async upload queue with persistent storage
 - Three-stage shutdown logic:
   1. Pi under-voltage detection (immediate)
-  2. Critical voltage (3.55V, 3 consecutive readings)
-  3. Low voltage warning (3.65V, display icon)
+  2. Critical voltage (3.7V, 3 consecutive readings)
+  3. Low voltage warning (3.8V, display icon)
 - Graceful poweroff with display animation
 
 **Monitoring Flow:**
@@ -514,15 +525,15 @@ Initialize INA219 sensor (I2C 0x43)
 [Every 30 seconds]
   ├─ Read voltage (dual-averaged, 50ms apart)
   ├─ Read current
-  ├─ Calculate percentage (3.55V=0%, 4.15V=100%)
+  ├─ Calculate percentage (3.7V=0%, 4.05V=100%)
   ├─ Get system health (vcgencmd, free)
   ├─ Check Pi under-voltage flag
   ├─ [If under-voltage detected]
   │   └─ IMMEDIATE SHUTDOWN
-  ├─ [If voltage < 3.55V for 3 consecutive readings]
-  │   ├─ Display 'D' animation (dead)
+  ├─ [If voltage < 3.7V for 3 consecutive readings]
+  │   ├─ Display 'D' animation (dying)
   │   └─ sudo poweroff
-  ├─ [If voltage < 3.65V for 3 consecutive readings]
+  ├─ [If voltage < 3.8V for 3 consecutive readings]
   │   └─ Display 'V' animation (battery low warning)
   └─ Queue upload to Supabase (async, non-blocking)
   ↓
@@ -565,8 +576,8 @@ Initialize INA219 sensor (I2C 0x43)
 | `O` | Agent speaking | Agent audio playback in progress |
 | `N` | NFC | NFC tag detected (brief feedback) |
 | `V` | Voltage low | Battery warning (< 3.65V) |
-| `D` | Dead | Critical shutdown (< 3.55V or under-voltage) |
-| `B` | Bye | Graceful shutdown (SIGTERM) |
+| `D` | Dying | Critical shutdown (< 3.7V or under-voltage) |
+| `B` | Boot | Application startup signal |
 
 **Major Functions:**
 
@@ -634,9 +645,10 @@ Initialize INA219 sensor (I2C 0x43)
 
 | Tag Name | Behavior |
 |----------|----------|
-| `TEST` | Trigger hot reload (fetch fresh config, update agent/volume/mode) |
-| `AGENT_START` | Transition from splash_idle → running_agent (begin conversation) |
-| Custom phrases | Inject text into active conversation as user message |
+| `TEST` | Trigger hot reload (fetch fresh config, update agent/volume/mode, play agent greeting) |
+| `AGENT_START` (from `splash_idle`) | Transition to `running_agent` and begin conversation |
+| `AGENT_START` (during a session) | Treated as TEST — exits the conversation, hot-reloads config, returns to splash |
+| Custom phrases | Inject text into active conversation as user message; also forces current turn to end so the agent can respond |
 
 **Tag Library Format (nfc_tags.json):**
 
@@ -790,7 +802,9 @@ INPUT_MODE=VAD  # In /tmp/aiflow.env
 
 ## Static Mode (No Cloud Dependency)
 
-For devices that need to operate independently without cloud configuration, a **Static Mode** is available using the `static_launcher.service`.
+For devices that need to operate independently without cloud configuration, a **Static Mode** can be set up using a `static_launcher.service`.
+
+> Note: the static launcher script and service file are not part of this repo — the steps below describe how to add them on a device.
 
 ### Overview
 
@@ -821,11 +835,10 @@ DEVICE_ID=static_orb_001
 DEVICE_NAME=Static Orb
 WIFI_SSID=
 WIFI_PASSWORD=
-AUTO_START=true
 EOF
 
-# Set system volume (volume 9 = ALSA raw value 117)
-amixer set Speaker 117 > /dev/null 2>&1
+# Set system volume (volume 9 = ALSA raw value 121, see constants.py)
+amixer set Speaker 121 > /dev/null 2>&1
 
 # Launch main.py
 cd /home/orb/AIflow
@@ -880,26 +893,14 @@ sudo systemctl start static_launcher.service
 | **OTA Updates** | Automatic | Manual only |
 | **Hot Reload (TEST tag)** | Updates from cloud | N/A (no API) |
 | **Network Dependency** | Required on boot | Optional (ElevenLabs only) |
-| **AUTO_START** | Configurable | Enabled (skips splash screen) |
 | **NFC Tags** | Downloads from GitHub | Downloads from GitHub (fallback to local) |
-
-### AUTO_START Feature
-
-When `AUTO_START=true` is set in `/tmp/aiflow.env`, the device will:
-
-1. Skip the splash screen (`splash_idle` state)
-2. Immediately enter `running_agent` state
-3. Connect to ElevenLabs WebSocket
-4. Start conversation without requiring NFC tag scan
-
-This is ideal for kiosk/demo devices that should be ready to use immediately on boot.
 
 ### NFC Behavior in Static Mode
 
 - NFC tags still download from GitHub (independent of config_fetcher)
-- Falls back to local file: `/home/orb/AIflow/{AGENT_ID}/nfc_tags.json`
-- TEST tag does NOT trigger hot reload (no cloud API access)
-- AGENT_START tag is unnecessary (AUTO_START enabled)
+- Falls back to local file: `/home/orb/AIflow/nfc_tags.json`
+- TEST tag will fail to hot-reload (no cloud API access)
+- AGENT_START still required to start a conversation
 - Custom phrase tags work normally
 
 ### Switching Between Modes
@@ -974,7 +975,7 @@ ws = await websockets.connect(
 # Client responds within 60s:
 {"type": "pong", "event_id": 1234}
 
-# Implementation: maintain_pong() task (main.py lines 197-238)
+# Implementation: maintain_pong() task in main.py
 # - Runs in background during idle
 # - Cancelled during user turn (to prevent message consumption)
 # - Restarted after agent response completes
@@ -1152,7 +1153,6 @@ os.execv → main.py
                             │ main.py                  │
                             │                          │
                             │ (Hardcoded agent/volume) │
-                            │ (AUTO_START=true)        │
                             │                          │
                             │ [Voice Agent]            │
                             └──────────────────────────┘
@@ -1280,17 +1280,17 @@ os.execv → main.py
       ↓
 [5] Determine tag type:
       │
-      ├─ "TEST" → Call on_nfc_tag_detected("TEST")
-      │            ↓
-      │          hot_reload_config()
-      │            ↓
-      │          Fetch config, update agent/volume/mode, play test audio
+      ├─ "TEST"  (any state)
+      │  or "AGENT_START" (during running_agent)
+      │            → hot_reload_config()
+      │                ↓
+      │              Fetch config, update agent/volume/mode,
+      │              return to splash, play agent greeting via WS
       │
-      ├─ "AGENT_START" → Call on_nfc_tag_detected("AGENT_START")
-      │                    ↓
-      │                  set_state("running_agent")
-      │                    ↓
-      │                  Connect WebSocket, start conversation
+      ├─ "AGENT_START" (from splash_idle)
+      │            → set_state("running_agent")
+      │                ↓
+      │              Connect WebSocket, start conversation
       │
       └─ Custom phrase → Queue phrase for injection
                           ↓
@@ -1376,14 +1376,16 @@ os.execv → main.py
       ↓
 [10] Update mute_button mode: set_mode(INPUT_MODE)
       ↓
-[11] Play test audio:
-       /home/orb/AIflow/{AGENT_ID}/test.wav
+[11] Force return to splash_idle (if currently in running_agent)
       ↓
-[12] serial_com.write('S') → Return to splash idle
+[12] play_agent_greeting() → Brief WS connect, plays agent greeting,
+      then disconnects (replaces the old test.wav file approach)
       ↓
-[13] hot_reload_config() returns
+[13] serial_com.write('S') → Return to splash idle
       ↓
-[14] Device ready with new config (NO process restart)
+[14] hot_reload_config() returns; user scans AGENT_START to begin
+      ↓
+[15] Device ready with new config (NO process restart)
 ```
 
 ---
@@ -1391,7 +1393,7 @@ os.execv → main.py
 ## License & Credits
 
 **Project:** The Orb - Voice Agent System
-**Version:** v1.0.7
+**Version:** v1.2
 **Platform:** Raspberry Pi Zero W 1.1
 **Organization:** Futurity Engineering
 
@@ -1416,4 +1418,6 @@ os.execv → main.py
 - System Architecture: Futurity Engineering
 - Technical Reference: Claude (Anthropic)
 
-**Last Updated:** 2025-01-15
+**Last Updated:** 2026-05-06
+
+**See also:** [ARCHITECTURE.md](ARCHITECTURE.md), [CHANGELOG.md](CHANGELOG.md), [QUICKREF.md](QUICKREF.md), [TODO.md](TODO.md)
